@@ -75,3 +75,51 @@ pub async fn rate_limit_middleware(
 
     Ok(next.run(request).await)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+    use tokio::time::{sleep, Duration};
+
+    #[test]
+    fn extracts_first_forwarded_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.10, 10.0.0.1"),
+        );
+
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "203.0.113.10");
+    }
+
+    #[test]
+    fn extracts_real_ip_when_no_forwarded_for() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.20"));
+
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "198.51.100.20");
+    }
+
+    #[test]
+    fn returns_unknown_when_no_ip_headers() {
+        let headers = HeaderMap::new();
+        let ip = extract_client_ip(&headers);
+        assert_eq!(ip, "unknown");
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_blocks_after_threshold_and_recovers_after_window() {
+        let limiter = SimpleRateLimiter::new(2, Duration::from_millis(50));
+        let key = "unit-test-key";
+
+        assert!(limiter.allow(key).await);
+        assert!(limiter.allow(key).await);
+        assert!(!limiter.allow(key).await);
+
+        sleep(Duration::from_millis(60)).await;
+        assert!(limiter.allow(key).await);
+    }
+}

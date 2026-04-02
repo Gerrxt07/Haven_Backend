@@ -85,3 +85,50 @@ impl CryptoManager {
         String::from_utf8(bytes).map_err(|_| AppError::Crypto("invalid utf-8 plaintext".to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CryptoManager;
+
+    #[test]
+    fn encrypt_decrypt_roundtrip_with_aad() {
+        let manager = CryptoManager::new("unit-test-secret");
+        let aad = b"context-aad";
+
+        let token = manager
+            .encrypt_string("hello haven", Some(aad))
+            .expect("encryption should succeed");
+
+        let plaintext = manager
+            .decrypt_to_string(&token, Some(aad))
+            .expect("decryption should succeed");
+
+        assert_eq!(plaintext, "hello haven");
+        assert!(token.starts_with("v1."));
+    }
+
+    #[test]
+    fn decrypt_fails_with_wrong_aad() {
+        let manager = CryptoManager::new("unit-test-secret");
+        let token = manager
+            .encrypt_string("payload", Some(b"aad-1"))
+            .expect("encryption should succeed");
+
+        let err = manager
+            .decrypt_to_string(&token, Some(b"aad-2"))
+            .expect_err("decryption should fail for wrong aad");
+
+        assert!(err.to_string().contains("decrypt failed"));
+    }
+
+    #[test]
+    fn decrypt_rejects_invalid_token_format() {
+        let manager = CryptoManager::new("unit-test-secret");
+
+        let err = manager
+            .decrypt_to_string("invalid-format", None)
+            .expect_err("invalid token format must fail");
+
+        assert!(err.to_string().contains("invalid token format"));
+    }
+}

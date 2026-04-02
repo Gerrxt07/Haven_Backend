@@ -57,3 +57,42 @@ impl IntoResponse for AppError {
         (status, body).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+    use axum::{
+        body::to_bytes,
+        http::StatusCode,
+        response::IntoResponse,
+    };
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn maps_validation_error_to_422_with_message() {
+        let response = AppError::Validation("invalid field".to_string()).into_response();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let json: Value = serde_json::from_slice(&body).expect("body should be valid json");
+
+        assert_eq!(
+            json.get("error").and_then(Value::as_str),
+            Some("validation error: invalid field")
+        );
+    }
+
+    #[tokio::test]
+    async fn maps_not_found_to_404() {
+        let response = AppError::NotFound.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn maps_internal_errors_to_500() {
+        let response = AppError::Crypto("broken".to_string()).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
