@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: haven-backend-dev
+    # This automatically restarts the container if it crashes or you restart Docker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8086:8086"
+    volumes:
+      # Mount the current directory so source code changes are instantly visible
+      - .:/app
+      # Cache for Rust registry and target to separate it from host Linux compiles
+      - cargo-target:/app/target
+      - cargo-registry:/usr/local/cargo/registry
+    env_file:
+      - .env
+    environment:
+      # Override localhost with container names since we are running inside the proxy-net network
+      - POSTGRES_URL=postgres://admin:b1T8r8SPQ6BXk5XZvY3nysGnlpF6@postgres:5432/haven_backend
+      - POSTGRES_ADMIN_URL=postgres://admin:b1T8r8SPQ6BXk5XZvY3nysGnlpF6@postgres:5432/postgres
+      - DRAGONFLY_URL=redis://dragonfly:6379
+    networks:
+      # Join the proxy-net to be able to talk to postgres and dragonfly
+      - proxy-net
+
+volumes:
+  # Prevents your local Ubuntu target folder from conflicting with Docker's Linux target folder
+  cargo-target:
+  cargo-registry:
+
+networks:
+  proxy-net:
+    external: true
