@@ -26,6 +26,8 @@ pub enum AppError {
     Conflict(String),
     #[error("validation error: {0}")]
     Validation(String),
+    #[error("crypto error: {0}")]
+    Crypto(String),
     #[error("too many requests")]
     TooManyRequests,
 }

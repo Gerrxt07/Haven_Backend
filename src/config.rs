@@ -8,6 +8,7 @@ pub struct Config {
     pub postgres_url: String,
     pub dragonfly_url: String,
     pub paseto_local_key: String,
+    pub xchacha20_key: String,
     pub cors_allowed_origins: Vec<String>,
     pub request_body_limit_bytes: usize,
     pub rate_limit_requests_per_minute: u32,
@@ -32,6 +33,8 @@ impl Config {
             env::var("DRAGONFLY_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         let paseto_local_key = env::var("PASETO_LOCAL_KEY")
             .unwrap_or_else(|_| "haven-change-me-32-byte-secret-key!".to_string());
+        let xchacha20_key = env::var("XCHACHA20_KEY")
+            .unwrap_or_else(|_| "haven-change-me-xchacha20-key".to_string());
         let cors_allowed_origins = env::var("CORS_ALLOWED_ORIGINS")
             .unwrap_or_else(|_| "http://localhost:5173".to_string())
             .split(',')
@@ -60,6 +63,7 @@ impl Config {
             postgres_url,
             dragonfly_url,
             paseto_local_key,
+            xchacha20_key,
             cors_allowed_origins,
             request_body_limit_bytes,
             rate_limit_requests_per_minute,

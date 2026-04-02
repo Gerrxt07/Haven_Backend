@@ -1,19 +1,27 @@
 mod auth;
 mod config;
+mod crypto;
+mod domain;
 mod error;
+mod repository;
 mod routes;
 mod security;
+mod service;
 mod state;
+mod transport;
 
 use auth::TokenManager;
 use axum::{middleware::from_fn_with_state, routing::get, Router};
 use config::Config;
+use crypto::CryptoManager;
 use deadpool_redis::Runtime;
 use security::{rate_limit_middleware, SimpleRateLimiter};
+use service::realtime_service::RealtimeService;
 use sqlx::{postgres::PgPoolOptions, Connection};
 use state::AppState;
 use std::{sync::Arc, time::Duration};
 use std::net::SocketAddr;
+use tokio::sync::broadcast;
 use tower_http::{
     cors::{Any, CorsLayer},
     limit::RequestBodyLimitLayer,
@@ -81,17 +89,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.access_token_ttl_minutes,
         config.refresh_token_ttl_days,
     ));
+    let crypto_manager = Arc::new(CryptoManager::new(&config.xchacha20_key));
+    let probe = crypto_manager.encrypt_string("haven-crypto-probe", Some(b"startup"))?;
+    let probe_plain = crypto_manager.decrypt_to_string(&probe, Some(b"startup"))?;
+    if probe_plain != "haven-crypto-probe" {
+        return Err("xchacha20 startup self-test failed".into());
+    }
+
     let rate_limiter = Arc::new(SimpleRateLimiter::new(
         config.rate_limit_requests_per_minute,
         Duration::from_secs(60),
     ));
+    let (realtime_tx, _) = broadcast::channel(512);
 
     let state = AppState {
         pg_pool,
         redis_pool,
+        dragonfly_url: config.dragonfly_url.clone(),
         token_manager,
+        crypto_manager,
         rate_limiter,
+        realtime_tx,
     };
+
+    RealtimeService::new(state.clone()).spawn_fanout_bridge();
 
     let cors_layer = if config.cors_allowed_origins.is_empty() {
         CorsLayer::new()
