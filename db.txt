@@ -1,0 +1,28 @@
+Core Identity
+- id (BigInt - 64Bit Snowflake | PK)
+- username (String - Unique)
+- display_name (String)
+
+Security & Auth
+- email (String - Unique)
+- email_verified (Boolean)
+- password_hash (String - Argon2)
+- token_version (Integer)
+- totp_secret (String, nullable)
+- totp_backup_codes (Text-Array, nullable - Hashed)
+
+Moderation & System
+- account_status (Enum: 'active', 'suspended', 'deleted' | Default: 'active')
+- flags (Integer - Bitmask für Badges/Rollen | Default: 0)
+- last_login_at (Timestamp, nullable)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+
+Profile Data
+- date_of_birth (Date)
+- avatar_url (String, nullable)
+- banner_url (String, nullable)
+- accent_color (String, nullable - z.B. "#AABBCC")
+- bio (Text, nullable)
+- pronouns (String, nullable)
+- locale (String)
