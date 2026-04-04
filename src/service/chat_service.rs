@@ -12,6 +12,7 @@ use crate::{
     service::realtime_service::RealtimeService,
     state::AppState,
 };
+use tracing::info;
 use validator::Validate;
 
 #[derive(Clone)]
@@ -267,6 +268,15 @@ impl ChatService {
         )
         .await?;
 
+        info!(
+            event = "chat.message.created",
+            channel_id = message.channel_id,
+            message_id = message.id,
+            author_user_id = message.author_user_id,
+            has_author_avatar_url = message.author_avatar_url.is_some(),
+            "chat message created"
+        );
+
         if let Some(recipient_key_boxes) = recipient_key_boxes {
             let rows = recipient_key_boxes
                 .into_iter()
@@ -293,6 +303,15 @@ impl ChatService {
                 "is_encrypted": message.is_encrypted,
                 "created_at": message.created_at,
             }),
+        );
+
+        info!(
+            event = "chat.message.realtime_published",
+            channel_id = message.channel_id,
+            message_id = message.id,
+            author_user_id = message.author_user_id,
+            has_author_avatar_url = message.author_avatar_url.is_some(),
+            "chat realtime event published with author avatar metadata"
         );
 
         let realtime_service = RealtimeService::new(self.state.clone());

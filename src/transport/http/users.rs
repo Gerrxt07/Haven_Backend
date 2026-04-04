@@ -14,6 +14,7 @@ use axum::{
 use chrono::Utc;
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use std::path::PathBuf;
+use tracing::{info, warn};
 
 const MAX_AVATAR_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
 const MAX_AVATAR_DIMENSION: u32 = 128;
@@ -53,6 +54,12 @@ async fn upload_avatar(
     let auth_service = ServiceFactory::new(state.clone()).auth();
     let current_user = auth_service.me(&headers).await?;
 
+    info!(
+        event = "avatar.upload.start",
+        user_id = current_user.id,
+        "avatar upload started"
+    );
+
     let mut upload_bytes: Option<Vec<u8>> = None;
 
     while let Some(field) = multipart
@@ -77,6 +84,13 @@ async fn upload_avatar(
         .ok_or_else(|| AppError::BadRequest("multipart field 'file' is required".to_string()))?;
 
     if upload_bytes.len() > MAX_AVATAR_UPLOAD_BYTES {
+        warn!(
+            event = "avatar.upload.rejected_size",
+            user_id = current_user.id,
+            bytes = upload_bytes.len(),
+            max_bytes = MAX_AVATAR_UPLOAD_BYTES,
+            "avatar upload rejected due to size"
+        );
         return Err(AppError::Validation(
             "image exceeds 5MB upload limit".to_string(),
         ));
@@ -85,7 +99,21 @@ async fn upload_avatar(
     let guessed = image::guess_format(&upload_bytes)
         .map_err(|_| AppError::Validation("file must be a valid JPG or PNG image".to_string()))?;
 
+    info!(
+        event = "avatar.upload.detected_format",
+        user_id = current_user.id,
+        format = ?guessed,
+        bytes = upload_bytes.len(),
+        "avatar upload format detected"
+    );
+
     if guessed != ImageFormat::Jpeg && guessed != ImageFormat::Png {
+        warn!(
+            event = "avatar.upload.rejected_format",
+            user_id = current_user.id,
+            format = ?guessed,
+            "avatar upload rejected due to unsupported image format"
+        );
         return Err(AppError::Validation(
             "only JPG and PNG uploads are allowed".to_string(),
         ));
@@ -96,6 +124,15 @@ async fn upload_avatar(
     let optimized = resize_avatar(decoded);
     let (width, height) = optimized.dimensions();
     let webp_bytes = encode_webp(&optimized)?;
+
+    info!(
+        event = "avatar.upload.optimized",
+        user_id = current_user.id,
+        width,
+        height,
+        webp_bytes = webp_bytes.len(),
+        "avatar upload image optimized and encoded"
+    );
 
     let avatar_file_path = avatar_file_path(&state.avatar_storage_dir, current_user.id);
     if let Some(parent) = avatar_file_path.parent() {
@@ -122,6 +159,16 @@ async fn upload_avatar(
         .update_avatar_url(current_user.id, &avatar_url)
         .await?;
 
+    info!(
+        event = "avatar.upload.success",
+        user_id = current_user.id,
+        width,
+        height,
+        size_bytes = webp_bytes.len(),
+        avatar_url = %avatar_url,
+        "avatar upload completed"
+    );
+
     Ok(Json(AvatarUploadResponse {
         avatar_url,
         width,
@@ -136,9 +183,29 @@ async fn get_avatar(
     Path(user_id): Path<i64>,
 ) -> Result<impl IntoResponse, AppError> {
     let file_path = avatar_file_path(&state.avatar_storage_dir, user_id);
+    info!(
+        event = "avatar.download.request",
+        user_id,
+        file_path = %file_path.display(),
+        "avatar download requested"
+    );
     let bytes = tokio::fs::read(file_path)
         .await
-        .map_err(|_| AppError::NotFound)?;
+        .map_err(|_| {
+            warn!(
+                event = "avatar.download.not_found",
+                user_id,
+                "avatar download failed: file not found"
+            );
+            AppError::NotFound
+        })?;
+
+    info!(
+        event = "avatar.download.success",
+        user_id,
+        size_bytes = bytes.len(),
+        "avatar download succeeded"
+    );
 
     Ok((
         [
