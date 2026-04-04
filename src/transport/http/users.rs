@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use chrono::Utc;
 use image::{DynamicImage, GenericImageView, ImageFormat};
 use std::path::PathBuf;
 
@@ -111,7 +112,11 @@ async fn upload_avatar(
         .await
         .map_err(|_| AppError::BadRequest("failed to finalize avatar file".to_string()))?;
 
-    let avatar_url = format!("/api/v1/media/avatars/{}/avatar.webp", current_user.id);
+    let avatar_url = format!(
+        "/api/v1/media/avatars/{}/avatar.webp?v={}",
+        current_user.id,
+        Utc::now().timestamp_millis()
+    );
     let user_service = ServiceFactory::new(state).user();
     user_service
         .update_avatar_url(current_user.id, &avatar_url)

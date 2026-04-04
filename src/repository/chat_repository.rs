@@ -194,7 +194,9 @@ pub async fn create_message(pool: &PgPool, input: NewMessage) -> Result<Message,
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING
-            id, channel_id, author_user_id, content,
+            id, channel_id, author_user_id,
+            (SELECT avatar_url FROM users WHERE id = author_user_id) AS author_avatar_url,
+            content,
             is_encrypted, ciphertext, nonce, aad, algorithm,
             edited_at, deleted_at, created_at, updated_at
         "#,
@@ -223,14 +225,19 @@ pub async fn list_messages(
     let messages = sqlx::query_as::<_, Message>(
         r#"
         SELECT
-            id, channel_id, author_user_id, content,
-            is_encrypted, ciphertext, nonce, aad, algorithm,
-            edited_at, deleted_at, created_at, updated_at
-        FROM messages
-        WHERE channel_id = $1
-          AND deleted_at IS NULL
-          AND ($2::BIGINT IS NULL OR id < $2)
-        ORDER BY id DESC
+                        m.id,
+                        m.channel_id,
+                        m.author_user_id,
+                        u.avatar_url AS author_avatar_url,
+                        m.content,
+            m.is_encrypted, m.ciphertext, m.nonce, m.aad, m.algorithm,
+            m.edited_at, m.deleted_at, m.created_at, m.updated_at
+                FROM messages m
+                LEFT JOIN users u ON u.id = m.author_user_id
+                WHERE m.channel_id = $1
+                    AND m.deleted_at IS NULL
+                    AND ($2::BIGINT IS NULL OR m.id < $2)
+                ORDER BY m.id DESC
         LIMIT $3
         "#,
     )

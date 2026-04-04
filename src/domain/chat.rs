@@ -95,6 +95,7 @@ pub struct Message {
     pub id: i64,
     pub channel_id: i64,
     pub author_user_id: i64,
+    pub author_avatar_url: Option<String>,
     pub content: String,
     pub is_encrypted: bool,
     pub ciphertext: Option<String>,

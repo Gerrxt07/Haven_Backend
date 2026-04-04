@@ -289,6 +289,7 @@ impl ChatService {
                 "message_id": message.id,
                 "channel_id": message.channel_id,
                 "author_user_id": message.author_user_id,
+                "author_avatar_url": message.author_avatar_url,
                 "is_encrypted": message.is_encrypted,
                 "created_at": message.created_at,
             }),
