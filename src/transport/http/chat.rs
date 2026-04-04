@@ -19,8 +19,14 @@ pub fn router() -> Router<AppState> {
         .route("/servers", post(create_server))
         .route("/channels", post(create_channel_direct))
         .route("/messages", post(create_message_direct))
-        .route("/servers/{server_id}/channels", post(create_channel).get(list_channels))
-        .route("/channels/{channel_id}/messages", post(create_message).get(list_messages))
+        .route(
+            "/servers/{server_id}/channels",
+            post(create_channel).get(list_channels),
+        )
+        .route(
+            "/channels/{channel_id}/messages",
+            post(create_message).get(list_messages),
+        )
 }
 
 async fn create_server(

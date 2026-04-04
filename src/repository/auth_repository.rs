@@ -39,14 +39,17 @@ pub async fn insert_user_for_registration(
 
     match result {
         Ok(user) => Ok(user),
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            Err(AppError::Conflict("username or email already exists".to_string()))
-        }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => Err(
+            AppError::Conflict("username or email already exists".to_string()),
+        ),
         Err(err) => Err(AppError::Database(err)),
     }
 }
 
-pub async fn find_user_auth_by_email(pool: &PgPool, email: &str) -> Result<Option<UserAuthRow>, AppError> {
+pub async fn find_user_auth_by_email(
+    pool: &PgPool,
+    email: &str,
+) -> Result<Option<UserAuthRow>, AppError> {
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
         SELECT id, password_hash, account_status, token_version
@@ -110,7 +113,11 @@ pub async fn update_last_login(pool: &PgPool, user_id: i64) -> Result<(), AppErr
     Ok(())
 }
 
-pub async fn find_session(pool: &PgPool, session_id: i64, user_id: i64) -> Result<Option<SessionRow>, AppError> {
+pub async fn find_session(
+    pool: &PgPool,
+    session_id: i64,
+    user_id: i64,
+) -> Result<Option<SessionRow>, AppError> {
     let session = sqlx::query_as::<_, SessionRow>(
         r#"
         SELECT id, refresh_token_hash, expires_at, revoked_at, token_version
@@ -172,7 +179,10 @@ pub async fn commit_tx(tx: Transaction<'_, Postgres>) -> Result<(), AppError> {
     Ok(())
 }
 
-pub async fn find_current_user(pool: &PgPool, user_id: i64) -> Result<Option<AuthUserResponse>, AppError> {
+pub async fn find_current_user(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Option<AuthUserResponse>, AppError> {
     let user = sqlx::query_as::<_, AuthUserResponse>(
         r#"
         SELECT id, username, display_name, email, account_status, token_version, created_at

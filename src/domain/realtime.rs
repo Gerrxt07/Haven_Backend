@@ -13,9 +13,19 @@ pub struct RealtimeEvent {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientRealtimeMessage {
-    Join { channel: String, user_id: Option<i64> },
-    Broadcast { channel: String, user_id: Option<i64>, payload: serde_json::Value },
-    Presence { user_id: i64, status: String },
+    Join {
+        channel: String,
+        user_id: Option<i64>,
+    },
+    Broadcast {
+        channel: String,
+        user_id: Option<i64>,
+        payload: serde_json::Value,
+    },
+    Presence {
+        user_id: i64,
+        status: String,
+    },
     Ping,
 }
 

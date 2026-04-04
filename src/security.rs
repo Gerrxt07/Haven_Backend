@@ -5,7 +5,11 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use std::{collections::{HashMap, VecDeque}, sync::Arc, time::{Duration, Instant}};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -50,7 +54,12 @@ impl SimpleRateLimiter {
 
 fn extract_client_ip(headers: &HeaderMap) -> String {
     if let Some(value) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        return value.split(',').next().unwrap_or("unknown").trim().to_string();
+        return value
+            .split(',')
+            .next()
+            .unwrap_or("unknown")
+            .trim()
+            .to_string();
     }
 
     if let Some(value) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {

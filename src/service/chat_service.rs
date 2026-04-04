@@ -30,11 +30,15 @@ impl ChatService {
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
         if payload.owner_user_id <= 0 {
-            return Err(AppError::Validation("owner_user_id must be > 0".to_string()));
+            return Err(AppError::Validation(
+                "owner_user_id must be > 0".to_string(),
+            ));
         }
 
         if !chat_repository::user_exists(&self.state.pg_pool, payload.owner_user_id).await? {
-            return Err(AppError::BadRequest("owner user does not exist".to_string()));
+            return Err(AppError::BadRequest(
+                "owner user does not exist".to_string(),
+            ));
         }
 
         let slug = payload.slug.trim().to_lowercase();
@@ -87,7 +91,9 @@ impl ChatService {
 
         if let Some(actor_user_id) = payload.actor_user_id {
             if actor_user_id <= 0 {
-                return Err(AppError::Validation("actor_user_id must be > 0".to_string()));
+                return Err(AppError::Validation(
+                    "actor_user_id must be > 0".to_string(),
+                ));
             }
 
             let is_member =
@@ -124,7 +130,11 @@ impl ChatService {
         .await
     }
 
-    pub async fn list_channels(&self, server_id: i64, query: PaginationQuery) -> Result<Vec<Channel>, AppError> {
+    pub async fn list_channels(
+        &self,
+        server_id: i64,
+        query: PaginationQuery,
+    ) -> Result<Vec<Channel>, AppError> {
         let limit = query.limit.unwrap_or(50).clamp(1, 100);
         chat_repository::list_channels(&self.state.pg_pool, server_id, query.before, limit).await
     }
@@ -143,77 +153,100 @@ impl ChatService {
         }
 
         if payload.author_user_id <= 0 {
-            return Err(AppError::Validation("author_user_id must be > 0".to_string()));
+            return Err(AppError::Validation(
+                "author_user_id must be > 0".to_string(),
+            ));
         }
 
         let is_encrypted = payload.ciphertext.is_some() || payload.nonce.is_some();
 
-        let (content_to_store, ciphertext, nonce, aad, algorithm, recipient_key_boxes) = if is_encrypted {
-            let ciphertext = payload
-                .ciphertext
-                .as_ref()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .ok_or(AppError::Validation("ciphertext is required for e2ee message".to_string()))?;
+        let (content_to_store, ciphertext, nonce, aad, algorithm, recipient_key_boxes) =
+            if is_encrypted {
+                let ciphertext = payload
+                    .ciphertext
+                    .as_ref()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .ok_or(AppError::Validation(
+                        "ciphertext is required for e2ee message".to_string(),
+                    ))?;
 
-            let nonce = payload
-                .nonce
-                .as_ref()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .ok_or(AppError::Validation("nonce is required for e2ee message".to_string()))?;
+                let nonce = payload
+                    .nonce
+                    .as_ref()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .ok_or(AppError::Validation(
+                        "nonce is required for e2ee message".to_string(),
+                    ))?;
 
-            let recipient_key_boxes = payload.recipient_key_boxes.clone().ok_or(AppError::Validation(
-                "recipient_key_boxes are required for e2ee message".to_string(),
-            ))?;
+                let recipient_key_boxes =
+                    payload
+                        .recipient_key_boxes
+                        .clone()
+                        .ok_or(AppError::Validation(
+                            "recipient_key_boxes are required for e2ee message".to_string(),
+                        ))?;
 
-            if recipient_key_boxes.is_empty() {
-                return Err(AppError::Validation(
-                    "recipient_key_boxes cannot be empty".to_string(),
-                ));
-            }
-
-            for box_item in &recipient_key_boxes {
-                if box_item.recipient_user_id <= 0 {
+                if recipient_key_boxes.is_empty() {
                     return Err(AppError::Validation(
-                        "recipient_user_id must be > 0".to_string(),
+                        "recipient_key_boxes cannot be empty".to_string(),
                     ));
                 }
-                if box_item.encrypted_message_key.trim().is_empty() {
+
+                for box_item in &recipient_key_boxes {
+                    if box_item.recipient_user_id <= 0 {
+                        return Err(AppError::Validation(
+                            "recipient_user_id must be > 0".to_string(),
+                        ));
+                    }
+                    if box_item.encrypted_message_key.trim().is_empty() {
+                        return Err(AppError::Validation(
+                            "encrypted_message_key must not be empty".to_string(),
+                        ));
+                    }
+                }
+
+                (
+                    "[e2ee]".to_string(),
+                    Some(ciphertext),
+                    Some(nonce),
+                    payload.aad,
+                    Some(
+                        payload
+                            .algorithm
+                            .unwrap_or_else(|| "xchacha20poly1305".to_string()),
+                    ),
+                    Some(recipient_key_boxes),
+                )
+            } else {
+                let content = payload
+                    .content
+                    .as_ref()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .ok_or(AppError::Validation(
+                        "content must not be empty".to_string(),
+                    ))?;
+
+                if content
+                    .chars()
+                    .any(|c| c.is_control() && c != '\n' && c != '\t')
+                {
                     return Err(AppError::Validation(
-                        "encrypted_message_key must not be empty".to_string(),
+                        "content contains invalid control characters".to_string(),
                     ));
                 }
-            }
 
-            (
-                "[e2ee]".to_string(),
-                Some(ciphertext),
-                Some(nonce),
-                payload.aad,
-                Some(payload.algorithm.unwrap_or_else(|| "xchacha20poly1305".to_string())),
-                Some(recipient_key_boxes),
-            )
-        } else {
-            let content = payload
-                .content
-                .as_ref()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .ok_or(AppError::Validation("content must not be empty".to_string()))?;
+                (content, None, None, None, None, None)
+            };
 
-            if content.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
-                return Err(AppError::Validation(
-                    "content contains invalid control characters".to_string(),
-                ));
-            }
-
-            (content, None, None, None, None, None)
-        };
-
-        let is_member =
-            chat_repository::is_channel_member(&self.state.pg_pool, channel_id, payload.author_user_id)
-                .await?;
+        let is_member = chat_repository::is_channel_member(
+            &self.state.pg_pool,
+            channel_id,
+            payload.author_user_id,
+        )
+        .await?;
         if !is_member {
             return Err(AppError::Forbidden);
         }
@@ -267,14 +300,20 @@ impl ChatService {
         Ok(message)
     }
 
-    pub async fn list_messages(&self, channel_id: i64, query: PaginationQuery) -> Result<Vec<Message>, AppError> {
+    pub async fn list_messages(
+        &self,
+        channel_id: i64,
+        query: PaginationQuery,
+    ) -> Result<Vec<Message>, AppError> {
         if channel_id <= 0 {
             return Err(AppError::Validation("channel_id must be > 0".to_string()));
         }
 
         if let Some(before) = query.before {
             if before <= 0 {
-                return Err(AppError::Validation("before cursor must be > 0".to_string()));
+                return Err(AppError::Validation(
+                    "before cursor must be > 0".to_string(),
+                ));
             }
         }
 

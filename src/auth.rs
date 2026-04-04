@@ -59,8 +59,10 @@ impl TokenManager {
         let access_exp = Utc::now() + Duration::minutes(self.access_token_ttl_minutes);
         let refresh_exp = Utc::now() + Duration::days(self.refresh_token_ttl_days);
 
-        let access_token = self.build_token(user_id, session_id, token_version, "access", access_exp)?;
-        let refresh_token = self.build_token(user_id, session_id, token_version, "refresh", refresh_exp)?;
+        let access_token =
+            self.build_token(user_id, session_id, token_version, "access", access_exp)?;
+        let refresh_token =
+            self.build_token(user_id, session_id, token_version, "refresh", refresh_exp)?;
 
         Ok(AuthTokens {
             access_token,
@@ -88,14 +90,24 @@ impl TokenManager {
         PasetoBuilder::<V4, Local>::default()
             .set_claim(ExpirationClaim::try_from(exp_string).map_err(|_| AppError::Unauthorized)?)
             .set_claim(CustomClaim::try_from(("uid", user_id)).map_err(|_| AppError::Unauthorized)?)
-            .set_claim(CustomClaim::try_from(("sid", session_id)).map_err(|_| AppError::Unauthorized)?)
-            .set_claim(CustomClaim::try_from(("tv", token_version)).map_err(|_| AppError::Unauthorized)?)
-            .set_claim(CustomClaim::try_from(("typ", token_type)).map_err(|_| AppError::Unauthorized)?)
+            .set_claim(
+                CustomClaim::try_from(("sid", session_id)).map_err(|_| AppError::Unauthorized)?,
+            )
+            .set_claim(
+                CustomClaim::try_from(("tv", token_version)).map_err(|_| AppError::Unauthorized)?,
+            )
+            .set_claim(
+                CustomClaim::try_from(("typ", token_type)).map_err(|_| AppError::Unauthorized)?,
+            )
             .build(&key)
             .map_err(|_| AppError::Unauthorized)
     }
 
-    pub fn parse_and_validate(&self, token: &str, expected_type: &str) -> Result<TokenClaims, AppError> {
+    pub fn parse_and_validate(
+        &self,
+        token: &str,
+        expected_type: &str,
+    ) -> Result<TokenClaims, AppError> {
         let key = self.key();
         let value = PasetoParser::<V4, Local>::default()
             .parse(token, &key)

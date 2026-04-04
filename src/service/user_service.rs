@@ -34,4 +34,8 @@ impl UserService {
             .await?
             .ok_or(AppError::NotFound)
     }
+
+    pub async fn update_avatar_url(&self, user_id: i64, avatar_url: &str) -> Result<(), AppError> {
+        user_repository::update_avatar_url(&self.state.pg_pool, user_id, avatar_url).await
+    }
 }

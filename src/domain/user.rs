@@ -38,3 +38,12 @@ pub struct User {
     pub pronouns: Option<String>,
     pub locale: String,
 }
+
+#[derive(Serialize)]
+pub struct AvatarUploadResponse {
+    pub avatar_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub size_bytes: usize,
+    pub format: &'static str,
+}

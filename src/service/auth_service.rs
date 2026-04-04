@@ -41,7 +41,12 @@ impl AuthService {
         )
         .await?;
 
-        tracing::info!(event = "auth.register", user_id = user.id, email = user.email, "user registered");
+        tracing::info!(
+            event = "auth.register",
+            user_id = user.id,
+            email = user.email,
+            "user registered"
+        );
         Ok(user)
     }
 
@@ -58,23 +63,33 @@ impl AuthService {
         .ok_or(AppError::Unauthorized)?;
 
         if user.account_status != "active" {
-            tracing::warn!(event = "auth.login.blocked", user_id = user.id, status = user.account_status, "blocked login due to account status");
+            tracing::warn!(
+                event = "auth.login.blocked",
+                user_id = user.id,
+                status = user.account_status,
+                "blocked login due to account status"
+            );
             return Err(AppError::Forbidden);
         }
 
         if !verify_password(&user.password_hash, &payload.password) {
-            tracing::warn!(event = "auth.login.failed", email = payload.email, "invalid password");
+            tracing::warn!(
+                event = "auth.login.failed",
+                email = payload.email,
+                "invalid password"
+            );
             return Err(AppError::Unauthorized);
         }
 
         let session_id = generate_id();
-        let tokens = self
-            .state
-            .token_manager
-            .issue_tokens(user.id, session_id, user.token_version)?;
+        let tokens =
+            self.state
+                .token_manager
+                .issue_tokens(user.id, session_id, user.token_version)?;
 
         let refresh_hash = sha256_hex(&tokens.refresh_token);
-        let refresh_expires = Utc::now() + Duration::days(self.state.token_manager.refresh_ttl_days());
+        let refresh_expires =
+            Utc::now() + Duration::days(self.state.token_manager.refresh_ttl_days());
 
         auth_repository::insert_auth_session(
             &self.state.pg_pool,
@@ -88,7 +103,12 @@ impl AuthService {
 
         auth_repository::update_last_login(&self.state.pg_pool, user.id).await?;
 
-        tracing::info!(event = "auth.login", user_id = user.id, session_id, "login successful");
+        tracing::info!(
+            event = "auth.login",
+            user_id = user.id,
+            session_id,
+            "login successful"
+        );
         Ok(tokens)
     }
 
@@ -102,9 +122,10 @@ impl AuthService {
             .token_manager
             .parse_and_validate(&payload.refresh_token, "refresh")?;
 
-        let session = auth_repository::find_session(&self.state.pg_pool, claims.session_id, claims.user_id)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
+        let session =
+            auth_repository::find_session(&self.state.pg_pool, claims.session_id, claims.user_id)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
 
         if session.revoked_at.is_some() || session.expires_at < Utc::now() {
             return Err(AppError::Unauthorized);
@@ -119,20 +140,22 @@ impl AuthService {
             return Err(AppError::Unauthorized);
         }
 
-        let user = auth_repository::find_user_auth_by_id(&self.state.pg_pool, claims.user_id).await?;
+        let user =
+            auth_repository::find_user_auth_by_id(&self.state.pg_pool, claims.user_id).await?;
 
         if user.account_status != "active" {
             return Err(AppError::Forbidden);
         }
 
         let new_session_id = generate_id();
-        let tokens = self
-            .state
-            .token_manager
-            .issue_tokens(user.id, new_session_id, user.token_version)?;
+        let tokens =
+            self.state
+                .token_manager
+                .issue_tokens(user.id, new_session_id, user.token_version)?;
 
         let new_refresh_hash = sha256_hex(&tokens.refresh_token);
-        let new_refresh_expires = Utc::now() + Duration::days(self.state.token_manager.refresh_ttl_days());
+        let new_refresh_expires =
+            Utc::now() + Duration::days(self.state.token_manager.refresh_ttl_days());
 
         let mut tx = auth_repository::begin_tx(&self.state.pg_pool).await?;
         auth_repository::revoke_session(&mut tx, session.id).await?;
@@ -147,7 +170,13 @@ impl AuthService {
         .await?;
         auth_repository::commit_tx(tx).await?;
 
-        tracing::info!(event = "auth.refresh", user_id = user.id, old_session = session.id, new_session = new_session_id, "token refresh successful");
+        tracing::info!(
+            event = "auth.refresh",
+            user_id = user.id,
+            old_session = session.id,
+            new_session = new_session_id,
+            "token refresh successful"
+        );
         Ok(tokens)
     }
 
@@ -161,11 +190,15 @@ impl AuthService {
 
     async fn authenticate_from_headers(&self, headers: &HeaderMap) -> Result<AuthUser, AppError> {
         let bearer = extract_bearer(headers)?;
-        let claims = self.state.token_manager.parse_and_validate(&bearer, "access")?;
+        let claims = self
+            .state
+            .token_manager
+            .parse_and_validate(&bearer, "access")?;
 
-        let status_row = auth_repository::find_status_and_token_version(&self.state.pg_pool, claims.user_id)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
+        let status_row =
+            auth_repository::find_status_and_token_version(&self.state.pg_pool, claims.user_id)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
 
         if status_row.0 != "active" {
             return Err(AppError::Forbidden);

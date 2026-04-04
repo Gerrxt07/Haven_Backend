@@ -13,4 +13,5 @@ pub struct AppState {
     pub crypto_manager: Arc<CryptoManager>,
     pub rate_limiter: Arc<SimpleRateLimiter>,
     pub realtime_tx: broadcast::Sender<RealtimeEvent>,
+    pub avatar_storage_dir: String,
 }

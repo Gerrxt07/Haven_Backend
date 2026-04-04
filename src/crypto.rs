@@ -44,9 +44,15 @@ impl CryptoManager {
 
     pub fn decrypt_bytes(&self, token: &str, aad: Option<&[u8]>) -> Result<Vec<u8>, AppError> {
         let mut parts = token.split('.');
-        let version = parts.next().ok_or_else(|| AppError::Crypto("invalid token format".to_string()))?;
-        let nonce_b64 = parts.next().ok_or_else(|| AppError::Crypto("invalid token format".to_string()))?;
-        let ct_b64 = parts.next().ok_or_else(|| AppError::Crypto("invalid token format".to_string()))?;
+        let version = parts
+            .next()
+            .ok_or_else(|| AppError::Crypto("invalid token format".to_string()))?;
+        let nonce_b64 = parts
+            .next()
+            .ok_or_else(|| AppError::Crypto("invalid token format".to_string()))?;
+        let ct_b64 = parts
+            .next()
+            .ok_or_else(|| AppError::Crypto("invalid token format".to_string()))?;
 
         if version != "v1" || parts.next().is_some() {
             return Err(AppError::Crypto("invalid token format".to_string()));
@@ -82,7 +88,8 @@ impl CryptoManager {
 
     pub fn decrypt_to_string(&self, token: &str, aad: Option<&[u8]>) -> Result<String, AppError> {
         let bytes = self.decrypt_bytes(token, aad)?;
-        String::from_utf8(bytes).map_err(|_| AppError::Crypto("invalid utf-8 plaintext".to_string()))
+        String::from_utf8(bytes)
+            .map_err(|_| AppError::Crypto("invalid utf-8 plaintext".to_string()))
     }
 }
 

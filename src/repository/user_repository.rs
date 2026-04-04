@@ -60,3 +60,17 @@ pub async fn get_user(pool: &PgPool, id: i64) -> Result<Option<User>, AppError> 
 
     Ok(user)
 }
+
+pub async fn update_avatar_url(
+    pool: &PgPool,
+    user_id: i64,
+    avatar_url: &str,
+) -> Result<(), AppError> {
+    sqlx::query("UPDATE users SET avatar_url = $1 WHERE id = $2")
+        .bind(avatar_url)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}

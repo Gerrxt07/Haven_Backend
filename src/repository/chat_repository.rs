@@ -36,10 +36,7 @@ pub struct NewMessage {
     pub algorithm: Option<String>,
 }
 
-pub async fn create_server(
-    pool: &PgPool,
-    input: NewServer,
-) -> Result<Server, AppError> {
+pub async fn create_server(pool: &PgPool, input: NewServer) -> Result<Server, AppError> {
     let server = sqlx::query_as::<_, Server>(
         r#"
         INSERT INTO servers (id, owner_user_id, name, slug, description, icon_url, is_public)
@@ -98,20 +95,27 @@ pub async fn add_server_owner_member(
     Ok(())
 }
 
-pub async fn is_server_member(pool: &PgPool, server_id: i64, user_id: i64) -> Result<bool, AppError> {
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT 1 FROM members WHERE server_id = $1 AND user_id = $2",
-    )
-    .bind(server_id)
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?
-    .is_some();
+pub async fn is_server_member(
+    pool: &PgPool,
+    server_id: i64,
+    user_id: i64,
+) -> Result<bool, AppError> {
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT 1 FROM members WHERE server_id = $1 AND user_id = $2")
+            .bind(server_id)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?
+            .is_some();
 
     Ok(exists)
 }
 
-pub async fn is_channel_member(pool: &PgPool, channel_id: i64, user_id: i64) -> Result<bool, AppError> {
+pub async fn is_channel_member(
+    pool: &PgPool,
+    channel_id: i64,
+    user_id: i64,
+) -> Result<bool, AppError> {
     let exists = sqlx::query_scalar::<_, i64>(
         r#"
         SELECT 1
@@ -129,10 +133,7 @@ pub async fn is_channel_member(pool: &PgPool, channel_id: i64, user_id: i64) -> 
     Ok(exists)
 }
 
-pub async fn create_channel(
-    pool: &PgPool,
-    input: NewChannel,
-) -> Result<Channel, AppError> {
+pub async fn create_channel(pool: &PgPool, input: NewChannel) -> Result<Channel, AppError> {
     let channel = sqlx::query_as::<_, Channel>(
         r#"
         INSERT INTO channels (id, server_id, name, topic, channel_type, position, is_private)
@@ -152,9 +153,9 @@ pub async fn create_channel(
 
     match channel {
         Ok(c) => Ok(c),
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            Err(AppError::Conflict("channel name already exists in server".to_string()))
-        }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => Err(
+            AppError::Conflict("channel name already exists in server".to_string()),
+        ),
         Err(err) => Err(AppError::Database(err)),
     }
 }
@@ -184,10 +185,7 @@ pub async fn list_channels(
     Ok(channels)
 }
 
-pub async fn create_message(
-    pool: &PgPool,
-    input: NewMessage,
-) -> Result<Message, AppError> {
+pub async fn create_message(pool: &PgPool, input: NewMessage) -> Result<Message, AppError> {
     let message = sqlx::query_as::<_, Message>(
         r#"
         INSERT INTO messages (

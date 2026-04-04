@@ -1,5 +1,7 @@
 use crate::{
-    domain::e2ee::{ClaimPrekeyRequest, KeyBundleWithPrekey, PublicKeyBundle, UploadKeyBundleRequest},
+    domain::e2ee::{
+        ClaimPrekeyRequest, KeyBundleWithPrekey, PublicKeyBundle, UploadKeyBundleRequest,
+    },
     error::AppError,
     repository::e2ee_repository,
     state::AppState,
@@ -22,7 +24,9 @@ impl E2eeService {
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
         if payload.user_id <= 0 || payload.signed_prekey_id <= 0 {
-            return Err(AppError::Validation("invalid user_id or signed_prekey_id".to_string()));
+            return Err(AppError::Validation(
+                "invalid user_id or signed_prekey_id".to_string(),
+            ));
         }
 
         if payload.one_time_prekeys.is_empty() {
@@ -57,7 +61,9 @@ impl E2eeService {
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
         if payload.requester_user_id <= 0 || payload.target_user_id <= 0 {
-            return Err(AppError::Validation("invalid requester_user_id or target_user_id".to_string()));
+            return Err(AppError::Validation(
+                "invalid requester_user_id or target_user_id".to_string(),
+            ));
         }
 
         if payload.requester_user_id == payload.target_user_id {

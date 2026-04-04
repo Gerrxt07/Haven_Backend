@@ -14,6 +14,7 @@ pub struct Config {
     pub rate_limit_requests_per_minute: u32,
     pub access_token_ttl_minutes: i64,
     pub refresh_token_ttl_days: i64,
+    pub avatar_storage_dir: String,
 }
 
 impl Config {
@@ -27,8 +28,9 @@ impl Config {
         let postgres_admin_url = env::var("POSTGRES_ADMIN_URL")
             .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1:5432/postgres".to_string());
 
-        let postgres_url = env::var("POSTGRES_URL")
-            .unwrap_or_else(|_| format!("postgres://postgres:postgres@127.0.0.1:5432/{postgres_db}"));
+        let postgres_url = env::var("POSTGRES_URL").unwrap_or_else(|_| {
+            format!("postgres://postgres:postgres@127.0.0.1:5432/{postgres_db}")
+        });
         let dragonfly_url =
             env::var("DRAGONFLY_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         let paseto_local_key = env::var("PASETO_LOCAL_KEY")
@@ -43,7 +45,7 @@ impl Config {
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         let request_body_limit_bytes = env::var("REQUEST_BODY_LIMIT_BYTES")
-            .unwrap_or_else(|_| "1048576".to_string())
+            .unwrap_or_else(|_| "6291456".to_string())
             .parse::<usize>()?;
         let rate_limit_requests_per_minute = env::var("RATE_LIMIT_REQUESTS_PER_MINUTE")
             .unwrap_or_else(|_| "120".to_string())
@@ -54,6 +56,8 @@ impl Config {
         let refresh_token_ttl_days = env::var("REFRESH_TOKEN_TTL_DAYS")
             .unwrap_or_else(|_| "30".to_string())
             .parse::<i64>()?;
+        let avatar_storage_dir =
+            env::var("AVATAR_STORAGE_DIR").unwrap_or_else(|_| "./storage/avatars".to_string());
 
         Ok(Self {
             host,
@@ -69,6 +73,7 @@ impl Config {
             rate_limit_requests_per_minute,
             access_token_ttl_minutes,
             refresh_token_ttl_days,
+            avatar_storage_dir,
         })
     }
 }

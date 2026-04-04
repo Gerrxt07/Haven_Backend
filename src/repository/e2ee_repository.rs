@@ -1,5 +1,7 @@
 use crate::{
-    domain::e2ee::{KeyBundleWithPrekey, NewMessageRecipientKey, PublicKeyBundle, UploadKeyBundleRequest},
+    domain::e2ee::{
+        KeyBundleWithPrekey, NewMessageRecipientKey, PublicKeyBundle, UploadKeyBundleRequest,
+    },
     error::AppError,
 };
 use sqlx::PgPool;
@@ -13,7 +15,10 @@ pub async fn user_exists(pool: &PgPool, user_id: i64) -> Result<bool, AppError> 
     Ok(exists)
 }
 
-pub async fn upsert_key_bundle(pool: &PgPool, req: &UploadKeyBundleRequest) -> Result<(), AppError> {
+pub async fn upsert_key_bundle(
+    pool: &PgPool,
+    req: &UploadKeyBundleRequest,
+) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
     sqlx::query(
@@ -57,7 +62,10 @@ pub async fn upsert_key_bundle(pool: &PgPool, req: &UploadKeyBundleRequest) -> R
     Ok(())
 }
 
-pub async fn get_public_bundle(pool: &PgPool, user_id: i64) -> Result<Option<PublicKeyBundle>, AppError> {
+pub async fn get_public_bundle(
+    pool: &PgPool,
+    user_id: i64,
+) -> Result<Option<PublicKeyBundle>, AppError> {
     let bundle = sqlx::query_as::<_, PublicKeyBundle>(
         r#"
         SELECT user_id, identity_key, signed_prekey_id, signed_prekey, signed_prekey_signature, created_at, updated_at

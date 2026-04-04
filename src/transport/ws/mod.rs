@@ -6,7 +6,10 @@ use crate::{
     state::AppState,
 };
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        State,
+    },
     response::IntoResponse,
     routing::get,
     Router,
@@ -33,7 +36,12 @@ async fn handle_socket(state: AppState, socket: WebSocket) {
     let (mut sender, mut receiver) = socket.split();
     let ws_session_id = format!("{}", generate_id());
 
-    let joined = RealtimeEvent::new("client_joined", None, None, serde_json::json!({ "ok": true }));
+    let joined = RealtimeEvent::new(
+        "client_joined",
+        None,
+        None,
+        serde_json::json!({ "ok": true }),
+    );
     let _ = service.publish_with_fanout(joined).await;
 
     let mut send_task = tokio::spawn(async move {

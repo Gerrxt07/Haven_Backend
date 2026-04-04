@@ -37,7 +37,10 @@ pub async fn remove_session(pool: &deadpool_redis::Pool, session_id: &str) -> Re
     Ok(())
 }
 
-pub async fn publish_event(pool: &deadpool_redis::Pool, event: &RealtimeEvent) -> Result<(), AppError> {
+pub async fn publish_event(
+    pool: &deadpool_redis::Pool,
+    event: &RealtimeEvent,
+) -> Result<(), AppError> {
     let mut conn = pool.get().await?;
     let payload = serde_json::to_string(event)
         .map_err(|_| AppError::BadRequest("failed to serialize realtime event".to_string()))?;
@@ -56,12 +59,12 @@ pub async fn subscribe_events(
     let client = redis::Client::open(dragonfly_url)
         .map_err(|_| AppError::BadRequest("invalid dragonfly url".to_string()))?;
 
-    let mut pubsub = client
-        .get_async_pubsub()
+    let mut pubsub = client.get_async_pubsub().await.map_err(AppError::Cache)?;
+
+    pubsub
+        .subscribe(FANOUT_CHANNEL)
         .await
         .map_err(AppError::Cache)?;
-
-    pubsub.subscribe(FANOUT_CHANNEL).await.map_err(AppError::Cache)?;
 
     let mut stream = pubsub.on_message();
 

@@ -1,7 +1,5 @@
 use crate::{
-    domain::realtime::RealtimeEvent,
-    error::AppError,
-    repository::realtime_repository,
+    domain::realtime::RealtimeEvent, error::AppError, repository::realtime_repository,
     state::AppState,
 };
 

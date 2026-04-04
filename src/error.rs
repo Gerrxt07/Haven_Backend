@@ -61,11 +61,7 @@ impl IntoResponse for AppError {
 #[cfg(test)]
 mod tests {
     use super::AppError;
-    use axum::{
-        body::to_bytes,
-        http::StatusCode,
-        response::IntoResponse,
-    };
+    use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
     use serde_json::Value;
 
     #[tokio::test]

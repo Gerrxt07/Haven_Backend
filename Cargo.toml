@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 argon2 = "0.5"
 base64 = "0.22"
 chacha20poly1305 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 deadpool-redis = "0.22"
 futures-util = "0.3"
+image = { version = "0.25", default-features = true }
 rand = "0.8"
 redis = { version = "0.32", features = ["tokio-comp"] }
 rusty_paseto = { version = "0.7", features = ["batteries_included", "v4_local"] }
@@ -26,3 +27,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
 dotenvy = "0.15.7"
+webp = "0.3"

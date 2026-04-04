@@ -19,8 +19,8 @@ use security::{rate_limit_middleware, SimpleRateLimiter};
 use service::realtime_service::RealtimeService;
 use sqlx::{postgres::PgPoolOptions, Connection};
 use state::AppState;
-use std::{sync::Arc, time::Duration};
 use std::net::SocketAddr;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -65,7 +65,7 @@ async fn ensure_database_exists(config: &Config) -> Result<(), Box<dyn std::erro
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
-    
+
     tracing_subscriber::fmt()
         .with_max_level(Level::INFO)
         .with_env_filter(EnvFilter::from_default_env())
@@ -110,6 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         crypto_manager,
         rate_limiter,
         realtime_tx,
+        avatar_storage_dir: config.avatar_storage_dir.clone(),
     };
 
     RealtimeService::new(state.clone()).spawn_fanout_bridge();
@@ -117,7 +118,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cors_layer = if config.cors_allowed_origins.is_empty() {
         CorsLayer::new()
             .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
-            .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::AUTHORIZATION,
+            ])
             .allow_origin(Any)
     } else {
         let origins = config
@@ -128,11 +132,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         CorsLayer::new()
             .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
-            .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::AUTHORIZATION,
+            ])
             .allow_origin(origins)
     };
 
-    let api_router = routes::router().route_layer(from_fn_with_state(state.clone(), rate_limit_middleware));
+    let api_router =
+        routes::router().route_layer(from_fn_with_state(state.clone(), rate_limit_middleware));
 
     let app = Router::new()
         .route("/", get(|| async { "haven-backend" }))
