@@ -9,18 +9,22 @@ argon2 = "0.5"
 base64 = "0.22"
 chacha20poly1305 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6"
 deadpool-redis = "0.22"
 futures-util = "0.3"
 image = { version = "0.25", default-features = true }
+ahash = "0.8"
+mimalloc = { version = "0.1", default-features = false }
 rand = "0.8"
 redis = { version = "0.32", features = ["tokio-comp"] }
 rusty_paseto = { version = "0.7", features = ["batteries_included", "v4_local"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+simd-json = { version = "0.14", features = ["serde_impl"] }
 sha2 = "0.10"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono"] }
+tempfile = "3"
 thiserror = "2"
-time = "0.3"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "limit"] }
 tracing = "0.1"
@@ -29,3 +33,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.20", features = ["derive"] }
 dotenvy = "0.15.7"
 webp = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

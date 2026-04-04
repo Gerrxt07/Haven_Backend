@@ -10,6 +10,9 @@ mod service;
 mod state;
 mod transport;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use auth::TokenManager;
 use axum::{middleware::from_fn_with_state, routing::get, Router};
 use config::Config;

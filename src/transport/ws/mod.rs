@@ -48,7 +48,7 @@ async fn handle_socket(state: AppState, socket: WebSocket) {
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let payload = match serde_json::to_string(&event) {
+                    let payload = match simd_json::to_string(&event) {
                         Ok(json) => json,
                         Err(_) => continue,
                     };
@@ -69,7 +69,9 @@ async fn handle_socket(state: AppState, socket: WebSocket) {
         while let Some(Ok(message)) = receiver.next().await {
             match message {
                 Message::Text(text) => {
-                    let parsed: Result<ClientRealtimeMessage, _> = serde_json::from_str(&text);
+                    let mut bytes = text.as_bytes().to_vec();
+                    let parsed: Result<ClientRealtimeMessage, _> =
+                        simd_json::serde::from_slice(&mut bytes);
                     let Ok(client_msg) = parsed else {
                         continue;
                     };

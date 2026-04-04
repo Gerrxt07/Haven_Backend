@@ -1,0 +1,8 @@
+target
+.git
+.gitignore
+backend-events.log
+storage
+.env
+.env.*
+Dockerfile.dev

@@ -42,7 +42,7 @@ pub async fn publish_event(
     event: &RealtimeEvent,
 ) -> Result<(), AppError> {
     let mut conn = pool.get().await?;
-    let payload = serde_json::to_string(event)
+    let payload = simd_json::to_string(event)
         .map_err(|_| AppError::BadRequest("failed to serialize realtime event".to_string()))?;
     let _: i32 = redis::cmd("PUBLISH")
         .arg(FANOUT_CHANNEL)
@@ -74,7 +74,8 @@ pub async fn subscribe_events(
             Err(_) => continue,
         };
 
-        let event: RealtimeEvent = match serde_json::from_str(&payload) {
+        let mut payload_bytes = payload.into_bytes();
+        let event: RealtimeEvent = match simd_json::serde::from_slice(&mut payload_bytes) {
             Ok(v) => v,
             Err(_) => continue,
         };

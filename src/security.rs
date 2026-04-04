@@ -5,18 +5,18 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use dashmap::DashMap;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct SimpleRateLimiter {
     max_requests: u32,
     window: Duration,
-    entries: Arc<Mutex<HashMap<String, VecDeque<Instant>>>>,
+    entries: Arc<DashMap<String, VecDeque<Instant>, ahash::RandomState>>,
 }
 
 impl SimpleRateLimiter {
@@ -24,7 +24,7 @@ impl SimpleRateLimiter {
         Self {
             max_requests,
             window,
-            entries: Arc::new(Mutex::new(HashMap::new())),
+            entries: Arc::new(DashMap::with_hasher(ahash::RandomState::new())),
         }
     }
 
@@ -32,8 +32,7 @@ impl SimpleRateLimiter {
         let now = Instant::now();
         let cutoff = now - self.window;
 
-        let mut guard = self.entries.lock().await;
-        let bucket = guard.entry(key.to_string()).or_insert_with(VecDeque::new);
+        let mut bucket = self.entries.entry(key.to_string()).or_default();
 
         while let Some(front) = bucket.front() {
             if *front < cutoff {

@@ -13,12 +13,19 @@ use axum::{
 };
 use chrono::Utc;
 use image::{DynamicImage, GenericImageView, ImageFormat};
+use std::process::Command;
 use std::path::PathBuf;
 use tracing::{info, warn};
 
 const MAX_AVATAR_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
 const MAX_AVATAR_DIMENSION: u32 = 128;
 const WEBP_QUALITY: f32 = 75.0;
+
+struct ProcessedAvatar {
+    webp_bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -119,11 +126,16 @@ async fn upload_avatar(
         ));
     }
 
-    let decoded = image::load_from_memory_with_format(&upload_bytes, guessed)
-        .map_err(|_| AppError::Validation("failed to decode image".to_string()))?;
-    let optimized = resize_avatar(decoded);
-    let (width, height) = optimized.dimensions();
-    let webp_bytes = encode_webp(&optimized)?;
+    let processed = tokio::task::spawn_blocking(move || process_avatar_image(upload_bytes, guessed))
+        .await
+        .map_err(|_| AppError::BadRequest("avatar processing task failed".to_string()))?
+        .map_err(AppError::Validation)?;
+
+    let ProcessedAvatar {
+        webp_bytes,
+        width,
+        height,
+    } = processed;
 
     info!(
         event = "avatar.upload.optimized",
@@ -227,6 +239,63 @@ fn resize_avatar(input: DynamicImage) -> DynamicImage {
         MAX_AVATAR_DIMENSION,
         image::imageops::FilterType::Lanczos3,
     )
+}
+
+fn process_avatar_image(upload_bytes: Vec<u8>, guessed: ImageFormat) -> Result<ProcessedAvatar, String> {
+    if let Ok(processed) = process_avatar_image_vips(&upload_bytes, guessed) {
+        return Ok(processed);
+    }
+
+    let decoded = image::load_from_memory_with_format(&upload_bytes, guessed)
+        .map_err(|_| "failed to decode image".to_string())?;
+    let optimized = resize_avatar(decoded);
+    let (width, height) = optimized.dimensions();
+    let webp_bytes = encode_webp(&optimized).map_err(|_| "failed to encode image".to_string())?;
+
+    Ok(ProcessedAvatar {
+        webp_bytes,
+        width,
+        height,
+    })
+}
+
+fn process_avatar_image_vips(upload_bytes: &[u8], guessed: ImageFormat) -> Result<ProcessedAvatar, String> {
+    let temp_dir = tempfile::tempdir().map_err(|_| "failed to create temp dir".to_string())?;
+    let input_ext = match guessed {
+        ImageFormat::Png => "png",
+        ImageFormat::Jpeg => "jpg",
+        _ => return Err("unsupported image format".to_string()),
+    };
+
+    let input_path = temp_dir.path().join(format!("input.{input_ext}"));
+    let output_path = temp_dir.path().join("output.webp");
+
+    std::fs::write(&input_path, upload_bytes).map_err(|_| "failed to write temp input".to_string())?;
+
+    let output_spec = format!("{}[Q={}]", output_path.display(), WEBP_QUALITY.round());
+    let status = Command::new("vipsthumbnail")
+        .arg(&input_path)
+        .arg("--size")
+        .arg(format!("{}x{}", MAX_AVATAR_DIMENSION, MAX_AVATAR_DIMENSION))
+        .arg("-o")
+        .arg(output_spec)
+        .status()
+        .map_err(|_| "failed to start vipsthumbnail".to_string())?;
+
+    if !status.success() {
+        return Err("vipsthumbnail failed".to_string());
+    }
+
+    let webp_bytes = std::fs::read(&output_path).map_err(|_| "failed to read vipsthumbnail output".to_string())?;
+    let output_image = image::load_from_memory_with_format(&webp_bytes, ImageFormat::WebP)
+        .map_err(|_| "failed to decode vipsthumbnail output".to_string())?;
+    let (width, height) = output_image.dimensions();
+
+    Ok(ProcessedAvatar {
+        webp_bytes,
+        width,
+        height,
+    })
 }
 
 fn encode_webp(image: &DynamicImage) -> Result<Vec<u8>, AppError> {
