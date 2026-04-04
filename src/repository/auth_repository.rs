@@ -24,7 +24,7 @@ pub async fn insert_user_for_registration(
         INSERT INTO users (
             id, username, display_name, email, password_hash, date_of_birth, locale
         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, username, display_name, email, account_status, token_version, created_at
+        RETURNING id, username, display_name, email, avatar_url, account_status, token_version, created_at
         "#,
     )
     .bind(new_user.user_id)
@@ -185,7 +185,7 @@ pub async fn find_current_user(
 ) -> Result<Option<AuthUserResponse>, AppError> {
     let user = sqlx::query_as::<_, AuthUserResponse>(
         r#"
-        SELECT id, username, display_name, email, account_status, token_version, created_at
+        SELECT id, username, display_name, email, avatar_url, account_status, token_version, created_at
         FROM users
         WHERE id = $1
         "#,

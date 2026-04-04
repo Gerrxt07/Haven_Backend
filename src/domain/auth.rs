@@ -37,6 +37,7 @@ pub struct AuthUserResponse {
     pub username: String,
     pub display_name: String,
     pub email: String,
+    pub avatar_url: Option<String>,
     pub account_status: String,
     pub token_version: i32,
     pub created_at: DateTime<Utc>,
