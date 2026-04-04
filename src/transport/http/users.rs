@@ -23,7 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/users", post(create_user))
         .route("/users/{id}", get(get_user))
         .route("/users/me/avatar", post(upload_avatar))
-        .route("/media/avatars/{user_id}.webp", get(get_avatar))
+    .route("/media/avatars/{user_id}/avatar.webp", get(get_avatar))
 }
 
 async fn create_user(
@@ -111,7 +111,7 @@ async fn upload_avatar(
         .await
         .map_err(|_| AppError::BadRequest("failed to finalize avatar file".to_string()))?;
 
-    let avatar_url = format!("/api/v1/media/avatars/{}.webp", current_user.id);
+    let avatar_url = format!("/api/v1/media/avatars/{}/avatar.webp", current_user.id);
     let user_service = ServiceFactory::new(state).user();
     user_service
         .update_avatar_url(current_user.id, &avatar_url)

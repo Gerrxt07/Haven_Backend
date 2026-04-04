@@ -34,7 +34,7 @@ Server starts on `0.0.0.0:8086` by default.
 - `POST /api/v1/auth/refresh`
 - `GET /api/v1/auth/me` (Bearer access token)
 - `POST /api/v1/users/me/avatar` (Bearer access token, multipart `file` JPG/PNG <= 5MB, optimized to WebP)
-- `GET /api/v1/media/avatars/:user_id.webp`
+- `GET /api/v1/media/avatars/:user_id/avatar.webp`
 - `POST /api/v1/users`
 - `GET /api/v1/users/:id`
 - `GET /api/v1/ws` (WebSocket gateway: presence + new message events)
