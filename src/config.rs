@@ -15,6 +15,7 @@ pub struct Config {
     pub access_token_ttl_minutes: i64,
     pub refresh_token_ttl_days: i64,
     pub avatar_storage_dir: String,
+    pub backend_log_file: String,
 }
 
 impl Config {
@@ -56,8 +57,16 @@ impl Config {
         let refresh_token_ttl_days = env::var("REFRESH_TOKEN_TTL_DAYS")
             .unwrap_or_else(|_| "30".to_string())
             .parse::<i64>()?;
-        let avatar_storage_dir =
-            env::var("AVATAR_STORAGE_DIR").unwrap_or_else(|_| "./storage/avatars".to_string());
+        let avatar_storage_dir = env::var("AVATAR_STORAGE_DIR")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "./storage/avatars".to_string());
+        let backend_log_file = env::var("BACKEND_LOG_FILE")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "./backend-events.log".to_string());
 
         Ok(Self {
             host,
@@ -74,6 +83,7 @@ impl Config {
             access_token_ttl_minutes,
             refresh_token_ttl_days,
             avatar_storage_dir,
+            backend_log_file,
         })
     }
 }

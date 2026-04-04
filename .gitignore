@@ -1,2 +1,4 @@
 /target
 /.env
+backend-events.log
+storage/

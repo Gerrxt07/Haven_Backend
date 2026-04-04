@@ -20,15 +20,16 @@ use service::realtime_service::RealtimeService;
 use sqlx::{postgres::PgPoolOptions, Connection};
 use state::AppState;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tower_http::{
     cors::{Any, CorsLayer},
     limit::RequestBodyLimitLayer,
-    trace::TraceLayer,
+    trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::{info, Level};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn is_valid_db_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -65,13 +66,55 @@ async fn ensure_database_exists(config: &Config) -> Result<(), Box<dyn std::erro
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
-
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
     let config = Config::from_env()?;
+
+    let log_file_path = Path::new(&config.backend_log_file);
+    if let Some(parent_dir) = log_file_path.parent() {
+        if !parent_dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent_dir)?;
+        }
+    }
+
+    let log_dir = log_file_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let log_filename = log_file_path
+        .file_name()
+        .ok_or("BACKEND_LOG_FILE must include a filename")?
+        .to_string_lossy()
+        .to_string();
+
+    let file_appender = tracing_appender::rolling::never(log_dir, log_filename);
+    let (file_writer, _file_guard) = tracing_appender::non_blocking(file_appender);
+
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(
+            "haven_backend=trace,tower_http=info,axum=info,sqlx=warn,sqlx::query=warn,tokio_tungstenite=warn,tungstenite=warn",
+        )
+    });
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_thread_names(true)
+                .with_file(true)
+                .with_line_number(true),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_target(true)
+                .with_thread_ids(true)
+                .with_thread_names(true)
+                .with_file(true)
+                .with_line_number(true)
+                .with_writer(file_writer),
+        )
+        .init();
 
     ensure_database_exists(&config).await?;
 
@@ -148,11 +191,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(config.request_body_limit_bytes))
         .layer(cors_layer)
-        .layer(TraceLayer::new_for_http());
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO).include_headers(false))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO))
+                .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
+        );
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
+    info!(
+        log_file = %config.backend_log_file,
+        "backend event logging enabled"
+    );
     info!("haven-backend listening on {}", addr);
     axum::serve(listener, app).await?;
 

@@ -21,6 +21,9 @@ services:
       - POSTGRES_URL=postgres://admin:b1T8r8SPQ6BXk5XZvY3nysGnlpF6@postgres:5432/haven_backend
       - POSTGRES_ADMIN_URL=postgres://admin:b1T8r8SPQ6BXk5XZvY3nysGnlpF6@postgres:5432/postgres
       - DRAGONFLY_URL=redis://dragonfly:6379
+      - AVATAR_STORAGE_DIR=/app/storage/avatars
+      - BACKEND_LOG_FILE=/app/backend-events.log
+      - RUST_LOG=haven_backend=trace,tower_http=info,axum=info,sqlx=warn,sqlx::query=warn,tokio_tungstenite=warn,tungstenite=warn
     networks:
       # Join the proxy-net to be able to talk to postgres and dragonfly
       - proxy-net

@@ -5,5 +5,6 @@ RUN cargo install cargo-watch
 
 WORKDIR /app
 
-# When the container starts, watch for changes and restart cargo run automatically
-CMD ["cargo", "watch", "-x", "run"]
+# When the container starts, watch for source changes and restart cargo run automatically.
+# Ignore runtime output files to avoid restart loops.
+CMD ["cargo", "watch", "-i", "backend-events.log", "-i", "storage", "-x", "run"]
