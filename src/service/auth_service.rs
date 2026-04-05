@@ -546,11 +546,12 @@ fn generate_numeric_code(length: usize) -> String {
 fn generate_totp_secret() -> String {
     let mut secret = [0_u8; 20];
     rand::thread_rng().fill_bytes(&mut secret);
-    base32::encode(base32::Alphabet::RFC4648 { padding: false }, &secret)
+    base32::encode(base32::Alphabet::Rfc4648 { padding: false }, &secret)
 }
 
 fn build_otpauth_url(secret: &str, user_id: i64) -> String {
-    let label = encode(&format!("Haven:{user_id}"));
+    let s = format!("Haven:{user_id}");
+    let label = encode(&s);
     let issuer = encode("Haven");
     format!(
         "otpauth://totp/{}?secret={}&issuer={}&algorithm=SHA1&digits={}&period={}",
@@ -597,7 +598,7 @@ fn consume_backup_code(stored_hashes: &[String], provided: &str) -> Option<Vec<S
 
 fn verify_totp_code(secret_base32: &str, code: &str) -> Result<bool, AppError> {
     let secret = base32::decode(
-        base32::Alphabet::RFC4648 { padding: false },
+        base32::Alphabet::Rfc4648 { padding: false },
         secret_base32,
     )
     .ok_or_else(|| AppError::BadRequest("invalid 2fa secret".to_string()))?;
@@ -624,9 +625,9 @@ fn totp_code_for_timestamp(secret: &[u8], timestamp: i64) -> String {
 
     let offset = (hash[hash.len() - 1] & 0x0f) as usize;
     let binary = ((hash[offset] & 0x7f) as u32) << 24
-        | ((hash[offset + 1] & 0xff) as u32) << 16
-        | ((hash[offset + 2] & 0xff) as u32) << 8
-        | (hash[offset + 3] & 0xff) as u32;
+        | (hash[offset + 1] as u32) << 16
+        | (hash[offset + 2] as u32) << 8
+        | hash[offset + 3] as u32;
     let modulo = 10_u32.pow(TOTP_DIGITS);
     let value = binary % modulo;
     format!("{:0width$}", value, width = TOTP_DIGITS as usize)

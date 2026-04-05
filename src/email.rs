@@ -15,7 +15,7 @@ impl EmailClient {
     pub fn new(config: &Config) -> Result<Self, Box<dyn std::error::Error>> {
         let creds = Credentials::new(config.smtp_username.clone(), config.smtp_password.clone());
 
-        let mut builder = if config.smtp_use_starttls {
+        let builder = if config.smtp_use_starttls {
             AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)?
         } else {
             AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
