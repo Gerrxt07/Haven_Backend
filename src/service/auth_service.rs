@@ -55,12 +55,25 @@ impl AuthService {
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
-        let user = auth_repository::find_user_auth_by_email(
+        let normalized_email = payload.email.trim().to_lowercase();
+
+        let user = match auth_repository::find_user_auth_by_email(
             &self.state.pg_pool,
-            &payload.email.trim().to_lowercase(),
+            &normalized_email,
         )
         .await?
-        .ok_or(AppError::Unauthorized)?;
+        {
+            Some(user) => user,
+            None => {
+                tracing::warn!(
+                    event = "auth.login.failed",
+                    email = normalized_email,
+                    reason = "user_not_found",
+                    "invalid credentials"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        };
 
         if user.account_status != "active" {
             tracing::warn!(
