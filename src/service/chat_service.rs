@@ -25,18 +25,22 @@ impl ChatService {
         Self { state }
     }
 
-    pub async fn create_server(&self, payload: CreateServerRequest) -> Result<Server, AppError> {
+    pub async fn create_server(
+        &self,
+        actor_user_id: i64,
+        payload: CreateServerRequest,
+    ) -> Result<Server, AppError> {
         payload
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
-        if payload.owner_user_id <= 0 {
+        if actor_user_id <= 0 {
             return Err(AppError::Validation(
-                "owner_user_id must be > 0".to_string(),
+                "authenticated user id must be > 0".to_string(),
             ));
         }
 
-        if !chat_repository::user_exists(&self.state.pg_pool, payload.owner_user_id).await? {
+        if !chat_repository::user_exists(&self.state.pg_pool, actor_user_id).await? {
             return Err(AppError::BadRequest(
                 "owner user does not exist".to_string(),
             ));
@@ -56,7 +60,7 @@ impl ChatService {
             &self.state.pg_pool,
             chat_repository::NewServer {
                 id: generate_id(),
-                owner_user_id: payload.owner_user_id,
+                owner_user_id: actor_user_id,
                 name: payload.name.trim().to_string(),
                 slug,
                 description: payload.description,
@@ -79,6 +83,7 @@ impl ChatService {
 
     pub async fn create_channel(
         &self,
+        actor_user_id: i64,
         server_id: i64,
         payload: CreateChannelRequest,
     ) -> Result<Channel, AppError> {
@@ -90,19 +95,17 @@ impl ChatService {
             return Err(AppError::Validation("server_id must be > 0".to_string()));
         }
 
-        if let Some(actor_user_id) = payload.actor_user_id {
-            if actor_user_id <= 0 {
-                return Err(AppError::Validation(
-                    "actor_user_id must be > 0".to_string(),
-                ));
-            }
+        if actor_user_id <= 0 {
+            return Err(AppError::Validation(
+                "authenticated user id must be > 0".to_string(),
+            ));
+        }
 
-            let is_member =
-                chat_repository::is_server_member(&self.state.pg_pool, server_id, actor_user_id)
-                    .await?;
-            if !is_member {
-                return Err(AppError::Forbidden);
-            }
+        let is_member =
+            chat_repository::is_server_member(&self.state.pg_pool, server_id, actor_user_id)
+                .await?;
+        if !is_member {
+            return Err(AppError::Forbidden);
         }
 
         let channel_type = payload.channel_type.unwrap_or_else(|| "text".to_string());
@@ -133,15 +136,29 @@ impl ChatService {
 
     pub async fn list_channels(
         &self,
+        actor_user_id: i64,
         server_id: i64,
         query: PaginationQuery,
     ) -> Result<Vec<Channel>, AppError> {
+        if actor_user_id <= 0 {
+            return Err(AppError::Validation(
+                "authenticated user id must be > 0".to_string(),
+            ));
+        }
+        let is_member =
+            chat_repository::is_server_member(&self.state.pg_pool, server_id, actor_user_id)
+                .await?;
+        if !is_member {
+            return Err(AppError::Forbidden);
+        }
+
         let limit = query.limit.unwrap_or(50).clamp(1, 100);
         chat_repository::list_channels(&self.state.pg_pool, server_id, query.before, limit).await
     }
 
     pub async fn create_message(
         &self,
+        actor_user_id: i64,
         channel_id: i64,
         payload: CreateMessageRequest,
     ) -> Result<Message, AppError> {
@@ -153,9 +170,9 @@ impl ChatService {
             return Err(AppError::Validation("channel_id must be > 0".to_string()));
         }
 
-        if payload.author_user_id <= 0 {
+        if actor_user_id <= 0 {
             return Err(AppError::Validation(
-                "author_user_id must be > 0".to_string(),
+                "authenticated user id must be > 0".to_string(),
             ));
         }
 
@@ -242,12 +259,9 @@ impl ChatService {
                 (content, None, None, None, None, None)
             };
 
-        let is_member = chat_repository::is_channel_member(
-            &self.state.pg_pool,
-            channel_id,
-            payload.author_user_id,
-        )
-        .await?;
+        let is_member =
+            chat_repository::is_channel_member(&self.state.pg_pool, channel_id, actor_user_id)
+                .await?;
         if !is_member {
             return Err(AppError::Forbidden);
         }
@@ -257,7 +271,7 @@ impl ChatService {
             chat_repository::NewMessage {
                 id: generate_id(),
                 channel_id,
-                author_user_id: payload.author_user_id,
+                author_user_id: actor_user_id,
                 content: content_to_store,
                 is_encrypted,
                 ciphertext,
@@ -293,7 +307,7 @@ impl ChatService {
 
         let event = RealtimeEvent::new(
             "new_message",
-            Some(message.author_user_id),
+            Some(actor_user_id),
             Some(channel_id.to_string()),
             serde_json::json!({
                 "message_id": message.id,
@@ -322,11 +336,24 @@ impl ChatService {
 
     pub async fn list_messages(
         &self,
+        actor_user_id: i64,
         channel_id: i64,
         query: PaginationQuery,
     ) -> Result<Vec<Message>, AppError> {
+        if actor_user_id <= 0 {
+            return Err(AppError::Validation(
+                "authenticated user id must be > 0".to_string(),
+            ));
+        }
         if channel_id <= 0 {
             return Err(AppError::Validation("channel_id must be > 0".to_string()));
+        }
+
+        let is_member =
+            chat_repository::is_channel_member(&self.state.pg_pool, channel_id, actor_user_id)
+                .await?;
+        if !is_member {
+            return Err(AppError::Forbidden);
         }
 
         if let Some(before) = query.before {
@@ -343,10 +370,10 @@ impl ChatService {
 
     pub async fn create_channel_direct(
         &self,
+        actor_user_id: i64,
         payload: crate::domain::chat::CreateChannelDirectRequest,
     ) -> Result<Channel, AppError> {
         let request = CreateChannelRequest {
-            actor_user_id: Some(payload.actor_user_id),
             name: payload.name,
             topic: payload.topic,
             channel_type: payload.channel_type,
@@ -354,15 +381,16 @@ impl ChatService {
             is_private: payload.is_private,
         };
 
-        self.create_channel(payload.server_id, request).await
+        self.create_channel(actor_user_id, payload.server_id, request)
+            .await
     }
 
     pub async fn create_message_direct(
         &self,
+        actor_user_id: i64,
         payload: crate::domain::chat::CreateMessageDirectRequest,
     ) -> Result<Message, AppError> {
         let request = CreateMessageRequest {
-            author_user_id: payload.author_user_id,
             content: payload.content,
             ciphertext: payload.ciphertext,
             nonce: payload.nonce,
@@ -371,6 +399,7 @@ impl ChatService {
             recipient_key_boxes: payload.recipient_key_boxes,
         };
 
-        self.create_message(payload.channel_id, request).await
+        self.create_message(actor_user_id, payload.channel_id, request)
+            .await
     }
 }

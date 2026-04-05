@@ -86,4 +86,16 @@ impl Config {
             backend_log_file,
         })
     }
+
+    pub fn validate_security(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.paseto_local_key.contains("change-me") || self.paseto_local_key.len() < 32 {
+            return Err("PASETO_LOCAL_KEY must be set to a strong secret (>=32 chars)".into());
+        }
+
+        if self.xchacha20_key.contains("change-me") || self.xchacha20_key.len() < 32 {
+            return Err("XCHACHA20_KEY must be set to a strong secret (>=32 chars)".into());
+        }
+
+        Ok(())
+    }
 }

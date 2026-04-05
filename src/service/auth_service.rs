@@ -188,6 +188,10 @@ impl AuthService {
             .ok_or(AppError::Unauthorized)
     }
 
+    pub async fn authenticate_request(&self, headers: &HeaderMap) -> Result<AuthUser, AppError> {
+        self.authenticate_from_headers(headers).await
+    }
+
     async fn authenticate_from_headers(&self, headers: &HeaderMap) -> Result<AuthUser, AppError> {
         let bearer = extract_bearer(headers)?;
         let claims = self

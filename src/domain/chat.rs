@@ -10,7 +10,6 @@ pub struct CreateServerRequest {
     pub name: String,
     #[validate(length(min = 2, max = 120))]
     pub slug: String,
-    pub owner_user_id: i64,
     pub description: Option<String>,
     pub icon_url: Option<String>,
     pub is_public: Option<bool>,
@@ -31,7 +30,6 @@ pub struct Server {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateChannelRequest {
-    pub actor_user_id: Option<i64>,
     #[validate(length(min = 1, max = 80))]
     pub name: String,
     pub topic: Option<String>,
@@ -44,7 +42,6 @@ pub struct CreateChannelRequest {
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateChannelDirectRequest {
     pub server_id: i64,
-    pub actor_user_id: i64,
     #[validate(length(min = 1, max = 80))]
     pub name: String,
     pub topic: Option<String>,
@@ -69,7 +66,6 @@ pub struct Channel {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateMessageRequest {
-    pub author_user_id: i64,
     pub content: Option<String>,
     pub ciphertext: Option<String>,
     pub nonce: Option<String>,
@@ -81,7 +77,6 @@ pub struct CreateMessageRequest {
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateMessageDirectRequest {
     pub channel_id: i64,
-    pub author_user_id: i64,
     pub content: Option<String>,
     pub ciphertext: Option<String>,
     pub nonce: Option<String>,

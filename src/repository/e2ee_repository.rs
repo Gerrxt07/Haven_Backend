@@ -17,6 +17,7 @@ pub async fn user_exists(pool: &PgPool, user_id: i64) -> Result<bool, AppError> 
 
 pub async fn upsert_key_bundle(
     pool: &PgPool,
+    user_id: i64,
     req: &UploadKeyBundleRequest,
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
@@ -35,7 +36,7 @@ pub async fn upsert_key_bundle(
             updated_at = NOW()
         "#,
     )
-    .bind(req.user_id)
+    .bind(user_id)
     .bind(&req.identity_key)
     .bind(req.signed_prekey_id)
     .bind(&req.signed_prekey)
@@ -52,7 +53,7 @@ pub async fn upsert_key_bundle(
             "#,
         )
         .bind(prekey.id)
-        .bind(req.user_id)
+        .bind(user_id)
         .bind(&prekey.prekey)
         .execute(&mut *tx)
         .await?;

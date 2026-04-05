@@ -18,12 +18,16 @@ impl E2eeService {
         Self { state }
     }
 
-    pub async fn upload_key_bundle(&self, payload: UploadKeyBundleRequest) -> Result<(), AppError> {
+    pub async fn upload_key_bundle(
+        &self,
+        actor_user_id: i64,
+        payload: UploadKeyBundleRequest,
+    ) -> Result<(), AppError> {
         payload
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
-        if payload.user_id <= 0 || payload.signed_prekey_id <= 0 {
+        if actor_user_id <= 0 || payload.signed_prekey_id <= 0 {
             return Err(AppError::Validation(
                 "invalid user_id or signed_prekey_id".to_string(),
             ));
@@ -35,11 +39,11 @@ impl E2eeService {
             ));
         }
 
-        if !e2ee_repository::user_exists(&self.state.pg_pool, payload.user_id).await? {
+        if !e2ee_repository::user_exists(&self.state.pg_pool, actor_user_id).await? {
             return Err(AppError::BadRequest("user not found".to_string()));
         }
 
-        e2ee_repository::upsert_key_bundle(&self.state.pg_pool, &payload).await
+        e2ee_repository::upsert_key_bundle(&self.state.pg_pool, actor_user_id, &payload).await
     }
 
     pub async fn get_public_bundle(&self, user_id: i64) -> Result<PublicKeyBundle, AppError> {
@@ -54,25 +58,26 @@ impl E2eeService {
 
     pub async fn claim_prekey_bundle(
         &self,
+        actor_user_id: i64,
         payload: ClaimPrekeyRequest,
     ) -> Result<KeyBundleWithPrekey, AppError> {
         payload
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
-        if payload.requester_user_id <= 0 || payload.target_user_id <= 0 {
+        if actor_user_id <= 0 || payload.target_user_id <= 0 {
             return Err(AppError::Validation(
                 "invalid requester_user_id or target_user_id".to_string(),
             ));
         }
 
-        if payload.requester_user_id == payload.target_user_id {
+        if actor_user_id == payload.target_user_id {
             return Err(AppError::BadRequest(
                 "requester_user_id and target_user_id must differ".to_string(),
             ));
         }
 
-        if !e2ee_repository::user_exists(&self.state.pg_pool, payload.requester_user_id).await? {
+        if !e2ee_repository::user_exists(&self.state.pg_pool, actor_user_id).await? {
             return Err(AppError::BadRequest("requester user not found".to_string()));
         }
 
