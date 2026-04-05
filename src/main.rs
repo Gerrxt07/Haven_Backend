@@ -20,10 +20,12 @@ use crypto::CryptoManager;
 use deadpool_redis::Runtime;
 use security::{rate_limit_middleware, SimpleRateLimiter};
 use service::realtime_service::RealtimeService;
-use sqlx::{migrate::Migrator, postgres::PgPoolOptions, Connection};
+use sqlx::{postgres::PgPoolOptions, Connection};
 use state::AppState;
 use std::net::SocketAddr;
 use std::path::Path;
+
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tower_http::{
@@ -127,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&config.postgres_url)
         .await?;
 
-    Migrator::new(Path::new("./migrations")).await?.run(&pg_pool).await?;
+    MIGRATOR.run(&pg_pool).await?;
 
     let redis_cfg = deadpool_redis::Config::from_url(config.dragonfly_url.clone());
     let redis_pool = redis_cfg.create_pool(Some(Runtime::Tokio1))?;
