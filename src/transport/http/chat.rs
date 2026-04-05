@@ -9,6 +9,7 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     routing::post,
     Json, Router,
 };
@@ -30,45 +31,63 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn create_server(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<CreateServerRequest>,
 ) -> Result<Json<crate::domain::chat::Server>, AppError> {
-    let service = ServiceFactory::new(state).chat();
-    let server = service.create_server(payload).await?;
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let server = factory.chat().create_server(actor.id, payload).await?;
     Ok(Json(server))
 }
 
 async fn create_channel(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(server_id): Path<i64>,
     Json(payload): Json<CreateChannelRequest>,
 ) -> Result<Json<crate::domain::chat::Channel>, AppError> {
-    let service = ServiceFactory::new(state).chat();
-    let channel = service.create_channel(server_id, payload).await?;
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let channel = factory
+        .chat()
+        .create_channel(actor.id, server_id, payload)
+        .await?;
     Ok(Json(channel))
 }
 
 async fn list_channels(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(server_id): Path<i64>,
     Query(query): Query<PaginationQuery>,
 ) -> Result<Json<Vec<crate::domain::chat::Channel>>, AppError> {
-    let service = ServiceFactory::new(state).chat();
-    let channels = service.list_channels(server_id, query).await?;
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let channels = factory
+        .chat()
+        .list_channels(actor.id, server_id, query)
+        .await?;
     Ok(Json(channels))
 }
 
 async fn create_message(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(channel_id): Path<i64>,
     Json(payload): Json<CreateMessageRequest>,
 ) -> Result<Json<crate::domain::chat::Message>, AppError> {
-    let service = ServiceFactory::new(state).chat();
-    let message = service.create_message(channel_id, payload).await?;
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let message = factory
+        .chat()
+        .create_message(actor.id, channel_id, payload)
+        .await?;
     Ok(Json(message))
 }
 
 async fn list_messages(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(channel_id): Path<i64>,
     Query(raw): Query<HashMap<String, String>>,
@@ -99,25 +118,39 @@ async fn list_messages(
 
     let query = PaginationQuery { before, limit };
 
-    let service = ServiceFactory::new(state).chat();
-    let messages = service.list_messages(channel_id, query).await?;
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let messages = factory
+        .chat()
+        .list_messages(actor.id, channel_id, query)
+        .await?;
     Ok(Json(messages))
 }
 
 async fn create_channel_direct(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<CreateChannelDirectRequest>,
 ) -> Result<Json<crate::domain::chat::Channel>, AppError> {
-    let service = ServiceFactory::new(state).chat();
-    let channel = service.create_channel_direct(payload).await?;
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let channel = factory
+        .chat()
+        .create_channel_direct(actor.id, payload)
+        .await?;
     Ok(Json(channel))
 }
 
 async fn create_message_direct(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<CreateMessageDirectRequest>,
 ) -> Result<Json<crate::domain::chat::Message>, AppError> {
-    let service = ServiceFactory::new(state).chat();
-    let message = service.create_message_direct(payload).await?;
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let message = factory
+        .chat()
+        .create_message_direct(actor.id, payload)
+        .await?;
     Ok(Json(message))
 }

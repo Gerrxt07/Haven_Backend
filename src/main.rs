@@ -24,6 +24,8 @@ use sqlx::{postgres::PgPoolOptions, Connection};
 use state::AppState;
 use std::net::SocketAddr;
 use std::path::Path;
+
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tower_http::{
@@ -70,6 +72,7 @@ async fn ensure_database_exists(config: &Config) -> Result<(), Box<dyn std::erro
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let config = Config::from_env()?;
+    config.validate_security()?;
 
     let log_file_path = Path::new(&config.backend_log_file);
     if let Some(parent_dir) = log_file_path.parent() {
@@ -126,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&config.postgres_url)
         .await?;
 
-    sqlx::migrate!("./migrations").run(&pg_pool).await?;
+    MIGRATOR.run(&pg_pool).await?;
 
     let redis_cfg = deadpool_redis::Config::from_url(config.dragonfly_url.clone());
     let redis_pool = redis_cfg.create_pool(Some(Runtime::Tokio1))?;
@@ -196,7 +199,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(cors_layer)
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO).include_headers(false))
+                .make_span_with(
+                    DefaultMakeSpan::new()
+                        .level(Level::INFO)
+                        .include_headers(false),
+                )
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO))
                 .on_failure(DefaultOnFailure::new().level(Level::ERROR)),

@@ -11,7 +11,6 @@ pub struct OneTimePrekeyInput {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct UploadKeyBundleRequest {
-    pub user_id: i64,
     #[validate(length(min = 20, max = 8192))]
     pub identity_key: String,
     pub signed_prekey_id: i64,
@@ -46,7 +45,6 @@ pub struct KeyBundleWithPrekey {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct ClaimPrekeyRequest {
-    pub requester_user_id: i64,
     pub target_user_id: i64,
 }
 

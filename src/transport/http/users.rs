@@ -13,8 +13,8 @@ use axum::{
 };
 use chrono::Utc;
 use image::{DynamicImage, GenericImageView, ImageFormat};
-use std::process::Command;
 use std::path::PathBuf;
+use std::process::Command;
 use tracing::{info, warn};
 
 const MAX_AVATAR_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
@@ -32,7 +32,7 @@ pub fn router() -> Router<AppState> {
         .route("/users", post(create_user))
         .route("/users/{id}", get(get_user))
         .route("/users/me/avatar", post(upload_avatar))
-    .route("/media/avatars/{user_id}/avatar.webp", get(get_avatar))
+        .route("/media/avatars/{user_id}/avatar.webp", get(get_avatar))
 }
 
 async fn create_user(
@@ -126,10 +126,11 @@ async fn upload_avatar(
         ));
     }
 
-    let processed = tokio::task::spawn_blocking(move || process_avatar_image(upload_bytes, guessed))
-        .await
-        .map_err(|_| AppError::BadRequest("avatar processing task failed".to_string()))?
-        .map_err(AppError::Validation)?;
+    let processed =
+        tokio::task::spawn_blocking(move || process_avatar_image(upload_bytes, guessed))
+            .await
+            .map_err(|_| AppError::BadRequest("avatar processing task failed".to_string()))?
+            .map_err(AppError::Validation)?;
 
     let ProcessedAvatar {
         webp_bytes,
@@ -201,16 +202,13 @@ async fn get_avatar(
         file_path = %file_path.display(),
         "avatar download requested"
     );
-    let bytes = tokio::fs::read(file_path)
-        .await
-        .map_err(|_| {
-            warn!(
-                event = "avatar.download.not_found",
-                user_id,
-                "avatar download failed: file not found"
-            );
-            AppError::NotFound
-        })?;
+    let bytes = tokio::fs::read(file_path).await.map_err(|_| {
+        warn!(
+            event = "avatar.download.not_found",
+            user_id, "avatar download failed: file not found"
+        );
+        AppError::NotFound
+    })?;
 
     info!(
         event = "avatar.download.success",
@@ -241,7 +239,10 @@ fn resize_avatar(input: DynamicImage) -> DynamicImage {
     )
 }
 
-fn process_avatar_image(upload_bytes: Vec<u8>, guessed: ImageFormat) -> Result<ProcessedAvatar, String> {
+fn process_avatar_image(
+    upload_bytes: Vec<u8>,
+    guessed: ImageFormat,
+) -> Result<ProcessedAvatar, String> {
     if let Ok(processed) = process_avatar_image_vips(&upload_bytes, guessed) {
         return Ok(processed);
     }
@@ -259,7 +260,10 @@ fn process_avatar_image(upload_bytes: Vec<u8>, guessed: ImageFormat) -> Result<P
     })
 }
 
-fn process_avatar_image_vips(upload_bytes: &[u8], guessed: ImageFormat) -> Result<ProcessedAvatar, String> {
+fn process_avatar_image_vips(
+    upload_bytes: &[u8],
+    guessed: ImageFormat,
+) -> Result<ProcessedAvatar, String> {
     let temp_dir = tempfile::tempdir().map_err(|_| "failed to create temp dir".to_string())?;
     let input_ext = match guessed {
         ImageFormat::Png => "png",
@@ -270,7 +274,8 @@ fn process_avatar_image_vips(upload_bytes: &[u8], guessed: ImageFormat) -> Resul
     let input_path = temp_dir.path().join(format!("input.{input_ext}"));
     let output_path = temp_dir.path().join("output.webp");
 
-    std::fs::write(&input_path, upload_bytes).map_err(|_| "failed to write temp input".to_string())?;
+    std::fs::write(&input_path, upload_bytes)
+        .map_err(|_| "failed to write temp input".to_string())?;
 
     let output_spec = format!("{}[Q={}]", output_path.display(), WEBP_QUALITY.round());
     let status = Command::new("vipsthumbnail")
@@ -286,7 +291,8 @@ fn process_avatar_image_vips(upload_bytes: &[u8], guessed: ImageFormat) -> Resul
         return Err("vipsthumbnail failed".to_string());
     }
 
-    let webp_bytes = std::fs::read(&output_path).map_err(|_| "failed to read vipsthumbnail output".to_string())?;
+    let webp_bytes = std::fs::read(&output_path)
+        .map_err(|_| "failed to read vipsthumbnail output".to_string())?;
     let output_image = image::load_from_memory_with_format(&webp_bytes, ImageFormat::WebP)
         .map_err(|_| "failed to decode vipsthumbnail output".to_string())?;
     let (width, height) = output_image.dimensions();
