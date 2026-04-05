@@ -1,5 +1,9 @@
 use crate::{
-    domain::auth::{LoginRequest, RefreshRequest, RegisterRequest},
+    domain::auth::{
+        EmailVerificationConfirmRequest, EmailVerificationRequest, LoginRequest, RefreshRequest,
+        RegisterRequest, StatusResponse, TwoFactorConfirmRequest, TwoFactorDisableRequest,
+        TwoFactorSetupResponse,
+    },
     error::AppError,
     service::ServiceFactory,
     state::AppState,
@@ -17,6 +21,11 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login", post(login))
         .route("/auth/refresh", post(refresh))
         .route("/auth/me", get(me))
+        .route("/auth/email/verification/request", post(request_email_verification))
+        .route("/auth/email/verification/confirm", post(confirm_email_verification))
+        .route("/auth/2fa/setup", post(setup_two_factor))
+        .route("/auth/2fa/confirm", post(confirm_two_factor))
+        .route("/auth/2fa/disable", post(disable_two_factor))
 }
 
 async fn register(
@@ -53,4 +62,52 @@ async fn me(
     let service = ServiceFactory::new(state).auth();
     let current = service.me(&headers).await?;
     Ok(Json(current))
+}
+
+async fn request_email_verification(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<EmailVerificationRequest>,
+) -> Result<Json<StatusResponse>, AppError> {
+    let service = ServiceFactory::new(state).auth();
+    let status = service.request_email_verification(&headers, payload).await?;
+    Ok(Json(status))
+}
+
+async fn confirm_email_verification(
+    State(state): State<AppState>,
+    Json(payload): Json<EmailVerificationConfirmRequest>,
+) -> Result<Json<StatusResponse>, AppError> {
+    let service = ServiceFactory::new(state).auth();
+    let status = service.confirm_email_verification(payload).await?;
+    Ok(Json(status))
+}
+
+async fn setup_two_factor(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<TwoFactorSetupResponse>, AppError> {
+    let service = ServiceFactory::new(state).auth();
+    let response = service.setup_two_factor(&headers).await?;
+    Ok(Json(response))
+}
+
+async fn confirm_two_factor(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<TwoFactorConfirmRequest>,
+) -> Result<Json<StatusResponse>, AppError> {
+    let service = ServiceFactory::new(state).auth();
+    let status = service.confirm_two_factor(&headers, payload).await?;
+    Ok(Json(status))
+}
+
+async fn disable_two_factor(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<TwoFactorDisableRequest>,
+) -> Result<Json<StatusResponse>, AppError> {
+    let service = ServiceFactory::new(state).auth();
+    let status = service.disable_two_factor(&headers, payload).await?;
+    Ok(Json(status))
 }

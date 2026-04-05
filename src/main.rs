@@ -2,7 +2,9 @@ mod auth;
 mod config;
 mod crypto;
 mod domain;
+mod email;
 mod error;
+mod maintenance;
 mod repository;
 mod routes;
 mod security;
@@ -17,6 +19,7 @@ use auth::TokenManager;
 use axum::{middleware::from_fn_with_state, routing::get, Router};
 use config::Config;
 use crypto::CryptoManager;
+use email::EmailClient;
 use deadpool_redis::Runtime;
 use security::{rate_limit_middleware, SimpleRateLimiter};
 use service::realtime_service::RealtimeService;
@@ -145,10 +148,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("xchacha20 startup self-test failed".into());
     }
 
+    let email_client = Arc::new(EmailClient::new(&config)?);
     let rate_limiter = Arc::new(SimpleRateLimiter::new(
         config.rate_limit_requests_per_minute,
         Duration::from_secs(60),
     ));
+    let email_verify_ip_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(900)));
+    let email_verify_email_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(900)));
     let (realtime_tx, _) = broadcast::channel(512);
 
     let state = AppState {
@@ -157,12 +163,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         dragonfly_url: config.dragonfly_url.clone(),
         token_manager,
         crypto_manager,
+        email_client,
         rate_limiter,
+        email_verify_ip_limiter,
+        email_verify_email_limiter,
         realtime_tx,
         avatar_storage_dir: config.avatar_storage_dir.clone(),
     };
 
     RealtimeService::new(state.clone()).spawn_fanout_bridge();
+    maintenance::spawn_avatar_cleanup(state.clone());
 
     let cors_layer = if config.cors_allowed_origins.is_empty() {
         CorsLayer::new()

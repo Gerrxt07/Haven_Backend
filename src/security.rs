@@ -51,7 +51,7 @@ impl SimpleRateLimiter {
     }
 }
 
-fn extract_client_ip(headers: &HeaderMap) -> String {
+pub fn extract_client_ip(headers: &HeaderMap) -> String {
     if let Some(value) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         return value
             .split(',')

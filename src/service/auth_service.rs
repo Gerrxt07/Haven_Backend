@@ -1,13 +1,32 @@
 use crate::{
     auth::{generate_id, hash_password, sha256_hex, verify_password, AuthTokens},
-    domain::auth::{AuthUser, AuthUserResponse, LoginRequest, RefreshRequest, RegisterRequest},
+    domain::auth::{
+        AuthUser, AuthUserResponse, EmailVerificationConfirmRequest, EmailVerificationRequest,
+        LoginRequest, RefreshRequest, RegisterRequest, StatusResponse, TwoFactorConfirmRequest,
+        TwoFactorDisableRequest, TwoFactorSetupResponse,
+    },
     error::AppError,
     repository::auth_repository,
     state::AppState,
 };
 use axum::http::HeaderMap;
 use chrono::{Duration, Utc};
+use hmac::{Hmac, Mac};
+use rand::RngCore;
+use sha1::Sha1;
+use urlencoding::encode;
 use validator::Validate;
+
+type HmacSha1 = Hmac<Sha1>;
+
+const EMAIL_VERIFICATION_TTL_MINUTES: i64 = 10;
+const EMAIL_VERIFICATION_CODE_LENGTH: usize = 6;
+const EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS: i64 = 60;
+const TOTP_STEP_SECONDS: i64 = 30;
+const TOTP_DIGITS: u32 = 6;
+const TOTP_SETUP_TTL_MINUTES: i64 = 10;
+const BACKUP_CODE_COUNT: usize = 10;
+const BACKUP_CODE_LENGTH: usize = 10;
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -92,6 +111,47 @@ impl AuthService {
                 "invalid password"
             );
             return Err(AppError::Unauthorized);
+        }
+
+        if let Some(secret) = &user.totp_secret {
+            match (
+                payload.totp_code.as_deref(),
+                payload.backup_code.as_deref(),
+            ) {
+                (Some(code), _) => {
+                    if !verify_totp_code(secret, code)? {
+                        tracing::warn!(
+                            event = "auth.login.failed",
+                            email = payload.email,
+                            reason = "invalid_totp",
+                            "invalid 2fa code"
+                        );
+                        return Err(AppError::Unauthorized);
+                    }
+                }
+                (None, Some(backup_code)) => {
+                    let current_codes = user.totp_backup_codes.clone().unwrap_or_default();
+                    let updated_codes =
+                        consume_backup_code(&current_codes, backup_code).ok_or_else(|| {
+                            tracing::warn!(
+                                event = "auth.login.failed",
+                                email = payload.email,
+                                reason = "invalid_backup_code",
+                                "invalid backup code"
+                            );
+                            AppError::Unauthorized
+                        })?;
+                    auth_repository::update_backup_codes(
+                        &self.state.pg_pool,
+                        user.id,
+                        updated_codes,
+                    )
+                    .await?;
+                }
+                (None, None) => {
+                    return Err(AppError::TwoFactorRequired);
+                }
+            }
         }
 
         let session_id = generate_id();
@@ -201,6 +261,239 @@ impl AuthService {
             .ok_or(AppError::Unauthorized)
     }
 
+    pub async fn request_email_verification(
+        &self,
+        headers: &HeaderMap,
+        payload: EmailVerificationRequest,
+    ) -> Result<StatusResponse, AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        let normalized_email = payload.email.trim().to_lowercase();
+
+        let ip = crate::security::extract_client_ip(headers);
+        let ip_key = format!("email-verify:ip:{ip}");
+        if !self.state.email_verify_ip_limiter.allow(&ip_key).await {
+            return Err(AppError::TooManyRequests);
+        }
+
+        let email_key = format!("email-verify:email:{normalized_email}");
+        if !self.state.email_verify_email_limiter.allow(&email_key).await {
+            return Err(AppError::TooManyRequests);
+        }
+
+        let user = match auth_repository::find_user_email_status_by_email(
+            &self.state.pg_pool,
+            &normalized_email,
+        )
+        .await?
+        {
+            Some(user) => user,
+            None => {
+                return Ok(StatusResponse { status: "ok" });
+            }
+        };
+
+        if user.email_verified {
+            return Ok(StatusResponse { status: "ok" });
+        }
+
+        if let Some(latest) =
+            auth_repository::find_latest_email_verification_code(&self.state.pg_pool, user.id)
+                .await?
+        {
+            let cooldown_until =
+                latest.created_at + Duration::seconds(EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS);
+            if cooldown_until > Utc::now() {
+                return Err(AppError::TooManyRequests);
+            }
+        }
+
+        let code = generate_numeric_code(EMAIL_VERIFICATION_CODE_LENGTH);
+        let code_hash = sha256_hex(&code);
+        let expires_at = Utc::now() + Duration::minutes(EMAIL_VERIFICATION_TTL_MINUTES);
+
+        auth_repository::delete_email_verification_codes(&self.state.pg_pool, user.id).await?;
+        auth_repository::insert_email_verification_code(
+            &self.state.pg_pool,
+            generate_id(),
+            user.id,
+            code_hash,
+            expires_at,
+        )
+        .await?;
+
+        self.state
+            .email_client
+            .send_verification_code(&normalized_email, &code, EMAIL_VERIFICATION_TTL_MINUTES)
+            .await?;
+
+        Ok(StatusResponse { status: "ok" })
+    }
+
+    pub async fn confirm_email_verification(
+        &self,
+        payload: EmailVerificationConfirmRequest,
+    ) -> Result<StatusResponse, AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        let normalized_email = payload.email.trim().to_lowercase();
+        let user = auth_repository::find_user_email_status_by_email(
+            &self.state.pg_pool,
+            &normalized_email,
+        )
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+        if user.email_verified {
+            return Ok(StatusResponse { status: "ok" });
+        }
+
+        let latest_code =
+            auth_repository::find_latest_email_verification_code(&self.state.pg_pool, user.id)
+                .await?
+                .ok_or_else(|| AppError::BadRequest("verification code not found".to_string()))?;
+
+        if latest_code.consumed_at.is_some() || latest_code.expires_at < Utc::now() {
+            return Err(AppError::BadRequest("verification code expired".to_string()));
+        }
+
+        let incoming_hash = sha256_hex(payload.code.trim());
+        if incoming_hash != latest_code.code_hash {
+            return Err(AppError::BadRequest("invalid verification code".to_string()));
+        }
+
+        auth_repository::mark_email_verification_code_consumed(
+            &self.state.pg_pool,
+            latest_code.id,
+        )
+        .await?;
+        auth_repository::set_email_verified(&self.state.pg_pool, user.id).await?;
+
+        Ok(StatusResponse { status: "verified" })
+    }
+
+    pub async fn setup_two_factor(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<TwoFactorSetupResponse, AppError> {
+        let user = self.authenticate_from_headers(headers).await?;
+        let current =
+            auth_repository::find_user_auth_by_id(&self.state.pg_pool, user.id).await?;
+
+        if current.totp_secret.is_some() {
+            return Err(AppError::Conflict("2fa already enabled".to_string()));
+        }
+
+        let secret = generate_totp_secret();
+        let backup_codes = generate_backup_codes();
+        let hashed_backup_codes = hash_backup_codes(&backup_codes);
+        let expires_at = Utc::now() + Duration::minutes(TOTP_SETUP_TTL_MINUTES);
+
+        auth_repository::upsert_totp_setup(
+            &self.state.pg_pool,
+            user.id,
+            secret.clone(),
+            hashed_backup_codes,
+            expires_at,
+        )
+        .await?;
+
+        let otpauth_url = build_otpauth_url(&secret, user.id);
+
+        Ok(TwoFactorSetupResponse {
+            secret,
+            otpauth_url,
+            backup_codes,
+            expires_at,
+        })
+    }
+
+    pub async fn confirm_two_factor(
+        &self,
+        headers: &HeaderMap,
+        payload: TwoFactorConfirmRequest,
+    ) -> Result<StatusResponse, AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        let user = self.authenticate_from_headers(headers).await?;
+        let setup = auth_repository::find_totp_setup(&self.state.pg_pool, user.id)
+            .await?
+            .ok_or_else(|| AppError::BadRequest("2fa setup not found".to_string()))?;
+
+        if setup.expires_at < Utc::now() {
+            auth_repository::delete_totp_setup(&self.state.pg_pool, user.id).await?;
+            return Err(AppError::BadRequest("2fa setup expired".to_string()));
+        }
+
+        if !verify_totp_code(&setup.secret, payload.code.trim())? {
+            return Err(AppError::BadRequest("invalid 2fa code".to_string()));
+        }
+
+        auth_repository::set_user_totp(
+            &self.state.pg_pool,
+            user.id,
+            setup.secret,
+            setup.backup_codes,
+        )
+        .await?;
+        auth_repository::delete_totp_setup(&self.state.pg_pool, user.id).await?;
+
+        Ok(StatusResponse { status: "enabled" })
+    }
+
+    pub async fn disable_two_factor(
+        &self,
+        headers: &HeaderMap,
+        payload: TwoFactorDisableRequest,
+    ) -> Result<StatusResponse, AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        let user = self.authenticate_from_headers(headers).await?;
+        let current =
+            auth_repository::find_user_auth_by_id(&self.state.pg_pool, user.id).await?;
+
+        let secret = current
+            .totp_secret
+            .ok_or_else(|| AppError::BadRequest("2fa not enabled".to_string()))?;
+
+        let mut backup_codes = current.totp_backup_codes.clone().unwrap_or_default();
+
+        let mut verified = false;
+        if let Some(code) = payload.code.as_deref() {
+            verified = verify_totp_code(&secret, code.trim())?;
+        }
+
+        if !verified {
+            if let Some(backup_code) = payload.backup_code.as_deref() {
+                if let Some(updated) = consume_backup_code(&backup_codes, backup_code) {
+                    backup_codes = updated;
+                    auth_repository::update_backup_codes(
+                        &self.state.pg_pool,
+                        user.id,
+                        backup_codes,
+                    )
+                    .await?;
+                    verified = true;
+                }
+            }
+        }
+
+        if !verified {
+            return Err(AppError::Unauthorized);
+        }
+
+        auth_repository::clear_user_totp(&self.state.pg_pool, user.id).await?;
+        Ok(StatusResponse { status: "disabled" })
+    }
+
     pub async fn authenticate_request(&self, headers: &HeaderMap) -> Result<AuthUser, AppError> {
         self.authenticate_from_headers(headers).await
     }
@@ -241,4 +534,100 @@ fn extract_bearer(headers: &HeaderMap) -> Result<String, AppError> {
         .ok_or(AppError::Unauthorized)?;
 
     Ok(token.to_string())
+}
+
+fn generate_numeric_code(length: usize) -> String {
+    let mut rng = rand::thread_rng();
+    let max = 10_u32.pow(length as u32);
+    let value = rng.next_u32() % max;
+    format!("{:0width$}", value, width = length)
+}
+
+fn generate_totp_secret() -> String {
+    let mut secret = [0_u8; 20];
+    rand::thread_rng().fill_bytes(&mut secret);
+    base32::encode(base32::Alphabet::RFC4648 { padding: false }, &secret)
+}
+
+fn build_otpauth_url(secret: &str, user_id: i64) -> String {
+    let label = encode(&format!("Haven:{user_id}"));
+    let issuer = encode("Haven");
+    format!(
+        "otpauth://totp/{}?secret={}&issuer={}&algorithm=SHA1&digits={}&period={}",
+        label, secret, issuer, TOTP_DIGITS, TOTP_STEP_SECONDS
+    )
+}
+
+fn generate_backup_codes() -> Vec<String> {
+    let mut codes = Vec::with_capacity(BACKUP_CODE_COUNT);
+    for _ in 0..BACKUP_CODE_COUNT {
+        let mut code = String::with_capacity(BACKUP_CODE_LENGTH);
+        let mut bytes = [0_u8; BACKUP_CODE_LENGTH];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        for b in bytes.iter() {
+            let val = b % 36;
+            let ch = if val < 10 {
+                (b'0' + val) as char
+            } else {
+                (b'a' + (val - 10)) as char
+            };
+            code.push(ch);
+        }
+        codes.push(code);
+    }
+    codes
+}
+
+fn hash_backup_codes(codes: &[String]) -> Vec<String> {
+    codes.iter().map(|c| sha256_hex(c)).collect()
+}
+
+fn consume_backup_code(stored_hashes: &[String], provided: &str) -> Option<Vec<String>> {
+    let incoming_hash = sha256_hex(provided.trim());
+    if !stored_hashes.iter().any(|hash| hash == &incoming_hash) {
+        return None;
+    }
+    let updated = stored_hashes
+        .iter()
+        .filter(|hash| *hash != &incoming_hash)
+        .cloned()
+        .collect::<Vec<_>>();
+    Some(updated)
+}
+
+fn verify_totp_code(secret_base32: &str, code: &str) -> Result<bool, AppError> {
+    let secret = base32::decode(
+        base32::Alphabet::RFC4648 { padding: false },
+        secret_base32,
+    )
+    .ok_or_else(|| AppError::BadRequest("invalid 2fa secret".to_string()))?;
+
+    let now = Utc::now().timestamp();
+    for offset in [-1, 0, 1] {
+        let ts = now + offset * TOTP_STEP_SECONDS;
+        if totp_code_for_timestamp(&secret, ts) == code {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn totp_code_for_timestamp(secret: &[u8], timestamp: i64) -> String {
+    let counter = (timestamp / TOTP_STEP_SECONDS) as u64;
+    let mut msg = [0_u8; 8];
+    msg.copy_from_slice(&counter.to_be_bytes());
+
+    let mut mac = HmacSha1::new_from_slice(secret).expect("hmac can be initialized");
+    mac.update(&msg);
+    let hash = mac.finalize().into_bytes();
+
+    let offset = (hash[hash.len() - 1] & 0x0f) as usize;
+    let binary = ((hash[offset] & 0x7f) as u32) << 24
+        | ((hash[offset + 1] & 0xff) as u32) << 16
+        | ((hash[offset + 2] & 0xff) as u32) << 8
+        | (hash[offset + 3] & 0xff) as u32;
+    let modulo = 10_u32.pow(TOTP_DIGITS);
+    let value = binary % modulo;
+    format!("{:0width$}", value, width = TOTP_DIGITS as usize)
 }

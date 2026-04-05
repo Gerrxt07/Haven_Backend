@@ -16,6 +16,13 @@ pub struct Config {
     pub refresh_token_ttl_days: i64,
     pub avatar_storage_dir: String,
     pub backend_log_file: String,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_username: String,
+    pub smtp_password: String,
+    pub smtp_from_email: String,
+    pub smtp_from_name: String,
+    pub smtp_use_starttls: bool,
 }
 
 impl Config {
@@ -68,6 +75,19 @@ impl Config {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "./backend-events.log".to_string());
 
+        let smtp_host = env::var("SMTP_HOST")?;
+        let smtp_port = env::var("SMTP_PORT")
+            .unwrap_or_else(|_| "587".to_string())
+            .parse::<u16>()?;
+        let smtp_username = env::var("SMTP_USERNAME")?;
+        let smtp_password = env::var("SMTP_PASSWORD")?;
+        let smtp_from_email = env::var("SMTP_FROM_EMAIL")?;
+        let smtp_from_name =
+            env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "Haven".to_string());
+        let smtp_use_starttls = env::var("SMTP_USE_STARTTLS")
+            .unwrap_or_else(|_| "true".to_string())
+            .parse::<bool>()?;
+
         Ok(Self {
             host,
             port,
@@ -84,6 +104,13 @@ impl Config {
             refresh_token_ttl_days,
             avatar_storage_dir,
             backend_log_file,
+            smtp_host,
+            smtp_port,
+            smtp_username,
+            smtp_password,
+            smtp_from_email,
+            smtp_from_name,
+            smtp_use_starttls,
         })
     }
 

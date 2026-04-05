@@ -20,6 +20,8 @@ pub enum AppError {
     BadRequest(String),
     #[error("unauthorized")]
     Unauthorized,
+    #[error("two-factor authentication required")]
+    TwoFactorRequired,
     #[error("forbidden")]
     Forbidden,
     #[error("conflict: {0}")]
@@ -30,6 +32,8 @@ pub enum AppError {
     Crypto(String),
     #[error("too many requests")]
     TooManyRequests,
+    #[error("service error: {0}")]
+    Service(String),
 }
 
 #[derive(Serialize)]
@@ -43,10 +47,12 @@ impl IntoResponse for AppError {
             AppError::NotFound => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::TwoFactorRequired => StatusCode::UNAUTHORIZED,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
+            AppError::Service(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
