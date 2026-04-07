@@ -1,6 +1,7 @@
 pub mod auth_service;
 pub mod chat_service;
 pub mod e2ee_service;
+pub mod friends_service;
 pub mod health_service;
 pub mod realtime_service;
 pub mod user_service;
@@ -31,6 +32,10 @@ impl ServiceFactory {
 
     pub fn e2ee(&self) -> e2ee_service::E2eeService {
         e2ee_service::E2eeService::new(self.state.clone())
+    }
+
+    pub fn friends(&self) -> friends_service::FriendsService {
+        friends_service::FriendsService::new(self.state.clone())
     }
 
     pub fn health(&self) -> health_service::HealthService {
