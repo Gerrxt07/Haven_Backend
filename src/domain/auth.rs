@@ -53,7 +53,6 @@ pub struct UserAuthRow {
     pub password_hash: String,
     pub account_status: String,
     pub token_version: i32,
-    pub email_verified: bool,
     pub totp_secret: Option<String>,
     pub totp_backup_codes: Option<Vec<String>>,
 }

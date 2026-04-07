@@ -61,7 +61,7 @@ pub async fn find_user_auth_by_email(
 ) -> Result<Option<UserAuthRow>, AppError> {
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
-        SELECT id, password_hash, account_status, token_version, email_verified, totp_secret, totp_backup_codes
+        SELECT id, password_hash, account_status, token_version, totp_secret, totp_backup_codes
         FROM users
         WHERE email = $1
         "#,
@@ -76,7 +76,7 @@ pub async fn find_user_auth_by_email(
 pub async fn find_user_auth_by_id(pool: &PgPool, id: i64) -> Result<UserAuthRow, AppError> {
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
-        SELECT id, password_hash, account_status, token_version, email_verified, totp_secret, totp_backup_codes
+        SELECT id, password_hash, account_status, token_version, totp_secret, totp_backup_codes
         FROM users
         WHERE id = $1
         "#,
