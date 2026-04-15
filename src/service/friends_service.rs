@@ -5,11 +5,13 @@ use crate::{
         realtime::RealtimeEvent,
     },
     error::AppError,
-    repository::friends_repository,
+    repository::{cache_repository, friends_repository},
     service::realtime_service::RealtimeService,
     state::AppState,
 };
 use validator::Validate;
+
+const FRIENDS_CACHE_TTL_SECONDS: u64 = 300;
 
 #[derive(Clone)]
 pub struct FriendsService {
@@ -51,14 +53,6 @@ impl FriendsService {
             return Err(AppError::Conflict("users are already friends".to_string()));
         }
 
-        if friends_repository::has_pending_request_between(&self.state.pg_pool, actor_user_id, target.0)
-            .await?
-        {
-            return Err(AppError::Conflict(
-                "a pending friend request already exists".to_string(),
-            ));
-        }
-
         let request = friends_repository::create_friend_request(
             &self.state.pg_pool,
             friends_repository::NewFriendRequest {
@@ -68,6 +62,8 @@ impl FriendsService {
             },
         )
         .await?;
+
+        self.invalidate_pending_cache_for(actor_user_id, target.0).await?;
 
         let event = RealtimeEvent::new(
             "friend_request_received",
@@ -83,15 +79,76 @@ impl FriendsService {
     }
 
     pub async fn list_incoming(&self, actor_user_id: i64) -> Result<Vec<FriendRequest>, AppError> {
-        friends_repository::list_incoming_pending(&self.state.pg_pool, actor_user_id).await
+        let cache_key = format!("cache:friends:incoming:{actor_user_id}");
+        if let Some(cached) =
+            cache_repository::get_json::<Vec<FriendRequest>>(&self.state.redis_pool, &cache_key)
+                .await?
+        {
+            return Ok(cached);
+        }
+
+        let requests = friends_repository::list_incoming_pending(&self.state.pg_pool, actor_user_id)
+            .await?;
+
+        let index_key = format!("cache:friends:index:{actor_user_id}");
+        cache_repository::set_json_indexed(
+            &self.state.redis_pool,
+            &index_key,
+            &cache_key,
+            &requests,
+            FRIENDS_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(requests)
     }
 
     pub async fn list_outgoing(&self, actor_user_id: i64) -> Result<Vec<FriendRequest>, AppError> {
-        friends_repository::list_outgoing_pending(&self.state.pg_pool, actor_user_id).await
+        let cache_key = format!("cache:friends:outgoing:{actor_user_id}");
+        if let Some(cached) =
+            cache_repository::get_json::<Vec<FriendRequest>>(&self.state.redis_pool, &cache_key)
+                .await?
+        {
+            return Ok(cached);
+        }
+
+        let requests = friends_repository::list_outgoing_pending(&self.state.pg_pool, actor_user_id)
+            .await?;
+
+        let index_key = format!("cache:friends:index:{actor_user_id}");
+        cache_repository::set_json_indexed(
+            &self.state.redis_pool,
+            &index_key,
+            &cache_key,
+            &requests,
+            FRIENDS_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(requests)
     }
 
     pub async fn list_friends(&self, actor_user_id: i64) -> Result<Vec<Friend>, AppError> {
-        friends_repository::list_friends(&self.state.pg_pool, actor_user_id).await
+        let cache_key = format!("cache:friends:list:{actor_user_id}");
+        if let Some(cached) =
+            cache_repository::get_json::<Vec<Friend>>(&self.state.redis_pool, &cache_key).await?
+        {
+            return Ok(cached);
+        }
+
+        let friends = friends_repository::list_friends(&self.state.pg_pool, actor_user_id).await?;
+
+        let index_key = format!("cache:friends:index:{actor_user_id}");
+        cache_repository::set_json_indexed(
+            &self.state.redis_pool,
+            &index_key,
+            &cache_key,
+            &friends,
+            FRIENDS_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(friends)
     }
 
     pub async fn accept_request(
@@ -125,12 +182,10 @@ impl FriendsService {
         )
         .await?;
 
-        let maybe_friend = friends_repository::get_friend_row(
-            &self.state.pg_pool,
-            updated.from_user_id,
-            updated.to_user_id,
-        )
-        .await?;
+        self.invalidate_pending_cache_for(updated.from_user_id, updated.to_user_id)
+            .await?;
+        self.invalidate_friends_cache_for(updated.from_user_id, updated.to_user_id)
+            .await?;
 
         let event = RealtimeEvent::new(
             "friend_request_accepted",
@@ -138,7 +193,6 @@ impl FriendsService {
             None,
             serde_json::json!({
                 "request": updated,
-                "friend": maybe_friend,
             }),
         );
         let _ = RealtimeService::new(self.state.clone())
@@ -172,6 +226,9 @@ impl FriendsService {
         )
         .await?;
 
+        self.invalidate_pending_cache_for(updated.from_user_id, updated.to_user_id)
+            .await?;
+
         let event = RealtimeEvent::new(
             "friend_request_declined",
             Some(actor_user_id),
@@ -183,5 +240,25 @@ impl FriendsService {
             .await;
 
         Ok(updated)
+    }
+
+    async fn invalidate_pending_cache_for(&self, user_a: i64, user_b: i64) -> Result<(), AppError> {
+        let index_a = format!("cache:friends:index:{user_a}");
+        let index_b = format!("cache:friends:index:{user_b}");
+        cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_a).await?;
+        if user_a != user_b {
+            cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_b).await?;
+        }
+        Ok(())
+    }
+
+    async fn invalidate_friends_cache_for(&self, user_a: i64, user_b: i64) -> Result<(), AppError> {
+        let index_a = format!("cache:friends:index:{user_a}");
+        let index_b = format!("cache:friends:index:{user_b}");
+        cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_a).await?;
+        if user_a != user_b {
+            cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_b).await?;
+        }
+        Ok(())
     }
 }

@@ -6,7 +6,7 @@ use crate::{
         TwoFactorDisableRequest, TwoFactorSetupResponse,
     },
     error::AppError,
-    repository::auth_repository,
+    repository::{auth_repository, cache_repository},
     state::AppState,
 };
 use axum::http::HeaderMap;
@@ -16,6 +16,7 @@ use rand::RngCore;
 use sha1::Sha1;
 use urlencoding::encode;
 use validator::Validate;
+use serde::{Deserialize, Serialize};
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -27,6 +28,13 @@ const TOTP_DIGITS: u32 = 6;
 const TOTP_SETUP_TTL_MINUTES: i64 = 10;
 const BACKUP_CODE_COUNT: usize = 10;
 const BACKUP_CODE_LENGTH: usize = 10;
+const AUTH_STATUS_CACHE_TTL_SECONDS: u64 = 120;
+
+#[derive(Serialize, Deserialize)]
+struct CachedAuthStatus {
+    account_status: String,
+    token_version: i32,
+}
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -505,10 +513,32 @@ impl AuthService {
             .token_manager
             .parse_and_validate(&bearer, "access")?;
 
-        let status_row =
-            auth_repository::find_status_and_token_version(&self.state.pg_pool, claims.user_id)
+        let status_cache_key = format!("cache:auth:status:{}", claims.user_id);
+        let status_row = if let Some(cached) =
+            cache_repository::get_json::<CachedAuthStatus>(&self.state.redis_pool, &status_cache_key)
+                .await?
+        {
+            (cached.account_status, cached.token_version)
+        } else {
+            let row = auth_repository::find_status_and_token_version(&self.state.pg_pool, claims.user_id)
                 .await?
                 .ok_or(AppError::Unauthorized)?;
+
+            let cached = CachedAuthStatus {
+                account_status: row.0.clone(),
+                token_version: row.1,
+            };
+
+            cache_repository::set_json(
+                &self.state.redis_pool,
+                &status_cache_key,
+                &cached,
+                AUTH_STATUS_CACHE_TTL_SECONDS,
+            )
+            .await?;
+
+            row
+        };
 
         if status_row.0 != "active" {
             return Err(AppError::Forbidden);

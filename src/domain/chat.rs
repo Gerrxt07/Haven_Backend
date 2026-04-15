@@ -15,7 +15,7 @@ pub struct CreateServerRequest {
     pub is_public: Option<bool>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
 pub struct Server {
     pub id: i64,
     pub owner_user_id: i64,
@@ -51,7 +51,7 @@ pub struct CreateChannelDirectRequest {
     pub is_private: Option<bool>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
 pub struct Channel {
     pub id: i64,
     pub server_id: i64,
@@ -85,7 +85,7 @@ pub struct CreateMessageDirectRequest {
     pub recipient_key_boxes: Option<Vec<RecipientKeyBoxInput>>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow, Clone)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
 pub struct Message {
     pub id: i64,
     pub channel_id: i64,

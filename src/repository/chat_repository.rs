@@ -5,13 +5,17 @@ use crate::{
 use sqlx::PgPool;
 
 pub struct NewServer {
-    pub id: i64,
     pub owner_user_id: i64,
     pub name: String,
     pub slug: String,
     pub description: Option<String>,
     pub icon_url: Option<String>,
     pub is_public: bool,
+}
+
+pub struct ServerWithOwnerMemberIds {
+    pub server_id: i64,
+    pub member_id: i64,
 }
 
 pub struct NewChannel {
@@ -36,21 +40,35 @@ pub struct NewMessage {
     pub algorithm: Option<String>,
 }
 
-pub async fn create_server(pool: &PgPool, input: NewServer) -> Result<Server, AppError> {
+pub async fn create_server_with_owner_member(
+    pool: &PgPool,
+    ids: ServerWithOwnerMemberIds,
+    input: NewServer,
+) -> Result<Server, AppError> {
     let server = sqlx::query_as::<_, Server>(
         r#"
-        INSERT INTO servers (id, owner_user_id, name, slug, description, icon_url, is_public)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, owner_user_id, name, slug, description, icon_url, is_public, created_at, updated_at
+        WITH inserted_server AS (
+            INSERT INTO servers (id, owner_user_id, name, slug, description, icon_url, is_public)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, owner_user_id, name, slug, description, icon_url, is_public, created_at, updated_at
+        ), inserted_member AS (
+            INSERT INTO members (id, server_id, user_id, role)
+            SELECT $8, s.id, s.owner_user_id, 'owner'
+            FROM inserted_server s
+            ON CONFLICT (server_id, user_id) DO NOTHING
+        )
+        SELECT id, owner_user_id, name, slug, description, icon_url, is_public, created_at, updated_at
+        FROM inserted_server
         "#,
     )
-    .bind(input.id)
+    .bind(ids.server_id)
     .bind(input.owner_user_id)
     .bind(input.name)
     .bind(input.slug)
     .bind(input.description)
     .bind(input.icon_url)
     .bind(input.is_public)
+    .bind(ids.member_id)
     .fetch_one(pool)
     .await;
 
@@ -59,40 +77,11 @@ pub async fn create_server(pool: &PgPool, input: NewServer) -> Result<Server, Ap
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
             Err(AppError::Conflict("server slug already exists".to_string()))
         }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23503") => {
+            Err(AppError::BadRequest("owner user does not exist".to_string()))
+        }
         Err(err) => Err(AppError::Database(err)),
     }
-}
-
-pub async fn user_exists(pool: &PgPool, user_id: i64) -> Result<bool, AppError> {
-    let exists = sqlx::query_scalar::<_, i64>("SELECT 1 FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await?
-        .is_some();
-
-    Ok(exists)
-}
-
-pub async fn add_server_owner_member(
-    pool: &PgPool,
-    id: i64,
-    server_id: i64,
-    user_id: i64,
-) -> Result<(), AppError> {
-    sqlx::query(
-        r#"
-        INSERT INTO members (id, server_id, user_id, role)
-        VALUES ($1, $2, $3, 'owner')
-        ON CONFLICT (server_id, user_id) DO NOTHING
-        "#,
-    )
-    .bind(id)
-    .bind(server_id)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
-
-    Ok(())
 }
 
 pub async fn is_server_member(

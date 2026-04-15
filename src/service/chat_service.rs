@@ -8,12 +8,16 @@ use crate::{
         realtime::RealtimeEvent,
     },
     error::AppError,
-    repository::{chat_repository, e2ee_repository},
+    repository::{cache_repository, chat_repository, e2ee_repository},
     service::realtime_service::RealtimeService,
     state::AppState,
 };
 use tracing::info;
 use validator::Validate;
+
+const MEMBERSHIP_CACHE_TTL_SECONDS: u64 = 120;
+const CHANNEL_LIST_CACHE_TTL_SECONDS: u64 = 300;
+const MESSAGE_LIST_CACHE_TTL_SECONDS: u64 = 120;
 
 #[derive(Clone)]
 pub struct ChatService {
@@ -40,12 +44,6 @@ impl ChatService {
             ));
         }
 
-        if !chat_repository::user_exists(&self.state.pg_pool, actor_user_id).await? {
-            return Err(AppError::BadRequest(
-                "owner user does not exist".to_string(),
-            ));
-        }
-
         let slug = payload.slug.trim().to_lowercase();
         if !slug
             .chars()
@@ -56,10 +54,13 @@ impl ChatService {
             ));
         }
 
-        let server = chat_repository::create_server(
+        let server = chat_repository::create_server_with_owner_member(
             &self.state.pg_pool,
+            chat_repository::ServerWithOwnerMemberIds {
+                server_id: generate_id(),
+                member_id: generate_id(),
+            },
             chat_repository::NewServer {
-                id: generate_id(),
                 owner_user_id: actor_user_id,
                 name: payload.name.trim().to_string(),
                 slug,
@@ -70,11 +71,13 @@ impl ChatService {
         )
         .await?;
 
-        chat_repository::add_server_owner_member(
-            &self.state.pg_pool,
-            generate_id(),
-            server.id,
-            server.owner_user_id,
+        let server_membership_key =
+            format!("cache:chat:member:server:{}:user:{}", server.id, actor_user_id);
+        cache_repository::set_json(
+            &self.state.redis_pool,
+            &server_membership_key,
+            &true,
+            MEMBERSHIP_CACHE_TTL_SECONDS,
         )
         .await?;
 
@@ -101,9 +104,9 @@ impl ChatService {
             ));
         }
 
-        let is_member =
-            chat_repository::is_server_member(&self.state.pg_pool, server_id, actor_user_id)
-                .await?;
+        let is_member = self
+            .is_server_member_cached(server_id, actor_user_id)
+            .await?;
         if !is_member {
             return Err(AppError::Forbidden);
         }
@@ -119,7 +122,7 @@ impl ChatService {
             }
         }
 
-        chat_repository::create_channel(
+        let channel = chat_repository::create_channel(
             &self.state.pg_pool,
             chat_repository::NewChannel {
                 id: generate_id(),
@@ -131,7 +134,12 @@ impl ChatService {
                 is_private: payload.is_private.unwrap_or(false),
             },
         )
-        .await
+        .await?;
+
+        let index_key = format!("cache:chat:channels:index:{server_id}");
+        cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_key).await?;
+
+        Ok(channel)
     }
 
     pub async fn list_channels(
@@ -145,15 +153,41 @@ impl ChatService {
                 "authenticated user id must be > 0".to_string(),
             ));
         }
-        let is_member =
-            chat_repository::is_server_member(&self.state.pg_pool, server_id, actor_user_id)
-                .await?;
+        let is_member = self
+            .is_server_member_cached(server_id, actor_user_id)
+            .await?;
         if !is_member {
             return Err(AppError::Forbidden);
         }
 
         let limit = query.limit.unwrap_or(50).clamp(1, 100);
-        chat_repository::list_channels(&self.state.pg_pool, server_id, query.before, limit).await
+        let before = query.before;
+        let before_token = before.unwrap_or(0);
+        let cache_key = format!("cache:chat:channels:{server_id}:{before_token}:{limit}");
+
+        if let Some(cached) = cache_repository::get_json::<Vec<Channel>>(
+            &self.state.redis_pool,
+            &cache_key,
+        )
+        .await?
+        {
+            return Ok(cached);
+        }
+
+        let channels =
+            chat_repository::list_channels(&self.state.pg_pool, server_id, before, limit).await?;
+
+        let index_key = format!("cache:chat:channels:index:{server_id}");
+        cache_repository::set_json_indexed(
+            &self.state.redis_pool,
+            &index_key,
+            &cache_key,
+            &channels,
+            CHANNEL_LIST_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(channels)
     }
 
     pub async fn create_message(
@@ -259,9 +293,9 @@ impl ChatService {
                 (content, None, None, None, None, None)
             };
 
-        let is_member =
-            chat_repository::is_channel_member(&self.state.pg_pool, channel_id, actor_user_id)
-                .await?;
+        let is_member = self
+            .is_channel_member_cached(channel_id, actor_user_id)
+            .await?;
         if !is_member {
             return Err(AppError::Forbidden);
         }
@@ -281,6 +315,10 @@ impl ChatService {
             },
         )
         .await?;
+
+        let message_index_key = format!("cache:chat:messages:index:{channel_id}");
+        cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &message_index_key)
+            .await?;
 
         info!(
             event = "chat.message.created",
@@ -349,9 +387,9 @@ impl ChatService {
             return Err(AppError::Validation("channel_id must be > 0".to_string()));
         }
 
-        let is_member =
-            chat_repository::is_channel_member(&self.state.pg_pool, channel_id, actor_user_id)
-                .await?;
+        let is_member = self
+            .is_channel_member_cached(channel_id, actor_user_id)
+            .await?;
         if !is_member {
             return Err(AppError::Forbidden);
         }
@@ -365,7 +403,33 @@ impl ChatService {
         }
 
         let limit = query.limit.unwrap_or(50).clamp(1, 100);
-        chat_repository::list_messages(&self.state.pg_pool, channel_id, query.before, limit).await
+        let before = query.before;
+        let before_token = before.unwrap_or(0);
+        let cache_key = format!("cache:chat:messages:{channel_id}:{before_token}:{limit}");
+
+        if let Some(cached) = cache_repository::get_json::<Vec<Message>>(
+            &self.state.redis_pool,
+            &cache_key,
+        )
+        .await?
+        {
+            return Ok(cached);
+        }
+
+        let messages =
+            chat_repository::list_messages(&self.state.pg_pool, channel_id, before, limit).await?;
+
+        let index_key = format!("cache:chat:messages:index:{channel_id}");
+        cache_repository::set_json_indexed(
+            &self.state.redis_pool,
+            &index_key,
+            &cache_key,
+            &messages,
+            MESSAGE_LIST_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(messages)
     }
 
     pub async fn create_channel_direct(
@@ -401,5 +465,59 @@ impl ChatService {
 
         self.create_message(actor_user_id, payload.channel_id, request)
             .await
+    }
+
+    async fn is_server_member_cached(
+        &self,
+        server_id: i64,
+        actor_user_id: i64,
+    ) -> Result<bool, AppError> {
+        let cache_key = format!("cache:chat:member:server:{server_id}:user:{actor_user_id}");
+        if let Some(cached) = cache_repository::get_json::<bool>(&self.state.redis_pool, &cache_key)
+            .await?
+        {
+            return Ok(cached);
+        }
+
+        let is_member =
+            chat_repository::is_server_member(&self.state.pg_pool, server_id, actor_user_id)
+                .await?;
+
+        cache_repository::set_json(
+            &self.state.redis_pool,
+            &cache_key,
+            &is_member,
+            MEMBERSHIP_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(is_member)
+    }
+
+    async fn is_channel_member_cached(
+        &self,
+        channel_id: i64,
+        actor_user_id: i64,
+    ) -> Result<bool, AppError> {
+        let cache_key = format!("cache:chat:member:channel:{channel_id}:user:{actor_user_id}");
+        if let Some(cached) = cache_repository::get_json::<bool>(&self.state.redis_pool, &cache_key)
+            .await?
+        {
+            return Ok(cached);
+        }
+
+        let is_member =
+            chat_repository::is_channel_member(&self.state.pg_pool, channel_id, actor_user_id)
+                .await?;
+
+        cache_repository::set_json(
+            &self.state.redis_pool,
+            &cache_key,
+            &is_member,
+            MEMBERSHIP_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(is_member)
     }
 }

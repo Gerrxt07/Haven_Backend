@@ -17,7 +17,7 @@ pub struct CreateUserRequest {
     pub pronouns: Option<String>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize, sqlx::FromRow, Clone)]
 pub struct User {
     pub id: i64,
     pub username: String,

@@ -8,7 +8,7 @@ pub struct SendFriendRequest {
     pub username: String,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow, Clone)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
 pub struct FriendRequest {
     pub id: i64,
     pub from_user_id: i64,
@@ -23,7 +23,7 @@ pub struct FriendRequest {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow, Clone)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
 pub struct Friend {
     pub id: i64,
     pub user_id: i64,
