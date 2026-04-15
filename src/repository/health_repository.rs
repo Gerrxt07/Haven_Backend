@@ -2,7 +2,7 @@ use crate::error::AppError;
 use redis::Cmd;
 
 pub async fn check_postgres(pool: &sqlx::PgPool) -> Result<(), AppError> {
-    let _: i64 = sqlx::query_scalar("SELECT 1").fetch_one(pool).await?;
+    let _: i32 = sqlx::query_scalar("SELECT 1").fetch_one(pool).await?;
     Ok(())
 }
 

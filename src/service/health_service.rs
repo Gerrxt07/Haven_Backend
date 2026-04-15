@@ -1,4 +1,5 @@
-use crate::{error::AppError, repository::health_repository, state::AppState};
+use crate::{repository::health_repository, state::AppState};
+use axum::http::StatusCode;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -18,14 +19,27 @@ impl HealthService {
         Self { state }
     }
 
-    pub async fn health(&self) -> Result<HealthResponse, AppError> {
-        health_repository::check_postgres(&self.state.pg_pool).await?;
-        health_repository::check_redis(&self.state.redis_pool).await?;
+    pub async fn health(&self) -> (StatusCode, HealthResponse) {
+        let postgres_ok = health_repository::check_postgres(&self.state.pg_pool)
+            .await
+            .is_ok();
+        let dragonfly_ok = health_repository::check_redis(&self.state.redis_pool)
+            .await
+            .is_ok();
 
-        Ok(HealthResponse {
-            status: "ok",
-            postgres: "ok",
-            dragonfly: "ok",
-        })
+        let all_ok = postgres_ok && dragonfly_ok;
+        let status_code = if all_ok {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+
+        let response = HealthResponse {
+            status: if all_ok { "ok" } else { "degraded" },
+            postgres: if postgres_ok { "ok" } else { "down" },
+            dragonfly: if dragonfly_ok { "ok" } else { "down" },
+        };
+
+        (status_code, response)
     }
 }
