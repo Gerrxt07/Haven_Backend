@@ -1,5 +1,5 @@
 use crate::{error::AppError, state::AppState};
-use chrono::{Local, TimeZone};
+use chrono::{Local, LocalResult, TimeZone, Timelike};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::time::{sleep, Duration};
@@ -8,7 +8,7 @@ use tracing::{info, warn};
 pub fn spawn_avatar_cleanup(state: AppState) {
     tokio::spawn(async move {
         loop {
-            let sleep_for = time_until_next_run(1, 0);
+            let sleep_for = time_until_next_run(3);
             sleep(sleep_for).await;
 
             if let Err(err) = cleanup_orphan_avatars(&state).await {
@@ -22,21 +22,33 @@ pub fn spawn_avatar_cleanup(state: AppState) {
     });
 }
 
-fn time_until_next_run(hour: u32, minute: u32) -> Duration {
+fn time_until_next_run(interval_hours: u32) -> Duration {
+    let interval_hours = interval_hours.max(1);
     let now = Local::now();
-    let today = now.date_naive();
-    let mut target = Local
-        .from_local_datetime(&today.and_hms_opt(hour, minute, 0).unwrap())
-        .single()
-        .unwrap_or(now);
 
-    if target <= now {
-        let tomorrow = today.succ_opt().unwrap_or(today);
-        target = Local
-            .from_local_datetime(&tomorrow.and_hms_opt(hour, minute, 0).unwrap())
-            .single()
-            .unwrap_or(now + chrono::Duration::hours(24));
-    }
+    let current_hour = now.hour();
+    let next_hour = ((current_hour / interval_hours) + 1) * interval_hours;
+
+    let (target_date, target_hour) = if next_hour < 24 {
+        (now.date_naive(), next_hour)
+    } else {
+        (
+            now.date_naive().succ_opt().unwrap_or_else(|| now.date_naive()),
+            0,
+        )
+    };
+
+    let target = match Local.from_local_datetime(&target_date.and_hms_opt(target_hour, 0, 0).unwrap()) {
+        LocalResult::Single(target) => target,
+        LocalResult::Ambiguous(earliest, _) => earliest,
+        LocalResult::None => now + chrono::Duration::hours(interval_hours as i64),
+    };
+
+    let target = if target <= now {
+        now + chrono::Duration::hours(interval_hours as i64)
+    } else {
+        target
+    };
 
     let diff = target - now;
     Duration::from_secs(diff.num_seconds().max(0) as u64)
