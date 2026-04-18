@@ -587,10 +587,20 @@ impl AuthService {
         )
         .await?;
 
-        self.state
+        if let Err(error) = self
+            .state
             .email_client
             .send_verification_code(&normalized_email, &code, EMAIL_VERIFICATION_TTL_MINUTES)
-            .await?;
+            .await
+        {
+            tracing::error!(
+                event = "auth.email_verification.request.send_failed",
+                user_id = user.id,
+                email = normalized_email,
+                ?error,
+                "verification email send failed after code persisted"
+            );
+        }
 
         Ok(StatusResponse { status: "ok" })
     }

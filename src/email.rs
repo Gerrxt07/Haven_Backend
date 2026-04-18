@@ -63,10 +63,15 @@ impl EmailClient {
             )
             .map_err(|_| AppError::Service("failed to build verification email".to_string()))?;
 
-        self.mailer
-            .send(message)
-            .await
-            .map_err(|_| AppError::Service("failed to send verification email".to_string()))?;
+        self.mailer.send(message).await.map_err(|error| {
+            tracing::error!(
+                event = "email.verification.send.failed",
+                to_email,
+                ?error,
+                "failed to send verification email"
+            );
+            AppError::Service("failed to send verification email".to_string())
+        })?;
 
         Ok(())
     }
