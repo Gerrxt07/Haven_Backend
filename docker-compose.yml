@@ -24,6 +24,11 @@ services:
       - AVATAR_STORAGE_DIR=/app/storage/avatars
       - BACKEND_LOG_FILE=/app/backend-events.log
       - RUST_LOG=haven_backend=trace,tower_http=info,axum=info,sqlx=warn,sqlx::query=warn,tokio_tungstenite=warn,tungstenite=warn
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - ${DOCKER_DNS_1:-1.1.1.1}
+      - ${DOCKER_DNS_2:-1.0.0.1}
     networks:
       # Join the proxy-net to be able to talk to postgres and dragonfly
       - proxy-net
