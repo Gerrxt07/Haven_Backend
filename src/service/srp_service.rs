@@ -5,7 +5,7 @@ use base64::{
 };
 use dashmap::DashMap;
 use rand::RngCore;
-use srp::groups::G_4096;
+use srp::groups::G_2048;
 use srp::server::SrpServer;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -62,8 +62,8 @@ impl SrpService {
         email: &str,
         verifier: Vec<u8>,
     ) -> Result<(String, String), AppError> {
-        // Create SRP server with 4096-bit group
-        let server = SrpServer::<sha2::Sha256>::new(&G_4096);
+        // Create SRP server with the same 2048-bit group used by the client
+        let server = SrpServer::<sha2::Sha256>::new(&G_2048);
 
         // Generate server ephemeral private key (b)
         let mut server_private_key = [0u8; 32];
@@ -125,7 +125,7 @@ impl SrpService {
         }
 
         // Create SRP server
-        let server = SrpServer::<sha2::Sha256>::new(&G_4096);
+        let server = SrpServer::<sha2::Sha256>::new(&G_2048);
 
         // Process client reply to create verifier
         let verifier = server
