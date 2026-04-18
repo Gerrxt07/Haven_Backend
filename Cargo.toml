@@ -16,8 +16,10 @@ futures-util = "0.3"
 hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 ahash = "0.8"
+hex = "0.4"
 lettre = { version = "0.11", default-features = false, features = ["tokio1", "tokio1-rustls-tls", "builder", "smtp-transport", "hostname"] }
 mimalloc = { version = "0.1", default-features = false }
+num-bigint = "0.4"
 rand = "0.8"
 redis = { version = "0.32", features = ["tokio-comp"] }
 srp = "0.6"

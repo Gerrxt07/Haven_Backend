@@ -4,9 +4,10 @@ use base64::{
     Engine as _,
 };
 use dashmap::DashMap;
+use num_bigint::BigUint;
 use rand::RngCore;
 use srp::groups::G_2048;
-use srp::server::SrpServer;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -62,15 +63,12 @@ impl SrpService {
         email: &str,
         verifier: Vec<u8>,
     ) -> Result<(String, String), AppError> {
-        // Create SRP server with the same 2048-bit group used by the client
-        let server = SrpServer::<sha2::Sha256>::new(&G_2048);
-
         // Generate server ephemeral private key (b)
         let mut server_private_key = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut server_private_key);
 
         // Compute server public ephemeral (B)
-        let server_public_key_b = server.compute_public_ephemeral(&server_private_key, &verifier);
+        let server_public_key_b = compute_server_public_ephemeral(&server_private_key, &verifier);
 
         // Generate challenge ID
         let challenge_id = Self::generate_challenge_id();
@@ -105,6 +103,7 @@ impl SrpService {
         &self,
         challenge_id: &str,
         expected_email: &str,
+        salt: &[u8],
         client_public_key_a: Vec<u8>,
         client_proof_m1: Vec<u8>,
     ) -> Result<Vec<u8>, AppError> {
@@ -124,25 +123,30 @@ impl SrpService {
             return Err(AppError::Unauthorized);
         }
 
-        // Create SRP server
-        let server = SrpServer::<sha2::Sha256>::new(&G_2048);
+        let server_public_key_b =
+            compute_server_public_ephemeral(&ephemeral_data.server_private_key, &ephemeral_data.verifier);
+        let premaster_secret = compute_premaster_secret(
+            &ephemeral_data.server_private_key,
+            &ephemeral_data.verifier,
+            &client_public_key_a,
+            &server_public_key_b,
+        )
+        .ok_or(AppError::Unauthorized)?;
+        let expected_client_proof = compute_js_client_proof(
+            expected_email.as_bytes(),
+            salt,
+            &client_public_key_a,
+            &server_public_key_b,
+            &premaster_secret,
+        );
 
-        // Process client reply to create verifier
-        let verifier = server
-            .process_reply(
-                &ephemeral_data.server_private_key,
-                &ephemeral_data.verifier,
-                &client_public_key_a,
-            )
-            .map_err(|_| AppError::Unauthorized)?;
+        if expected_client_proof != client_proof_m1 {
+            return Err(AppError::Unauthorized);
+        }
 
-        // Verify client proof (M1)
-        verifier
-            .verify_client(&client_proof_m1)
-            .map_err(|_| AppError::Unauthorized)?;
-
-        // Get server proof (M2) to send to client
-        let server_proof_m2 = verifier.proof().to_vec();
+        let session_key = sha256_bytes(&[&premaster_secret]);
+        let server_proof_m2 =
+            sha256_bytes(&[&client_public_key_a, &expected_client_proof, &session_key]);
 
         Ok(server_proof_m2)
     }
@@ -162,6 +166,80 @@ impl SrpService {
             }
         });
     }
+}
+
+fn sha256_bytes(parts: &[&[u8]]) -> Vec<u8> {
+    let mut digest = Sha256::new();
+    for part in parts {
+        digest.update(part);
+    }
+    digest.finalize().to_vec()
+}
+
+fn xor_bytes(left: &[u8], right: &[u8]) -> Vec<u8> {
+    left.iter()
+        .zip(right.iter())
+        .map(|(l, r)| l ^ r)
+        .collect()
+}
+
+fn compute_js_k() -> BigUint {
+    BigUint::from_bytes_be(&sha256_bytes(&[&G_2048.n.to_bytes_be(), &G_2048.g.to_bytes_be()]))
+}
+
+fn compute_u(client_public_key_a: &[u8], server_public_key_b: &[u8]) -> BigUint {
+    BigUint::from_bytes_be(&sha256_bytes(&[client_public_key_a, server_public_key_b]))
+}
+
+fn compute_server_public_ephemeral(server_private_key: &[u8], verifier: &[u8]) -> Vec<u8> {
+    let b = BigUint::from_bytes_be(server_private_key);
+    let v = BigUint::from_bytes_be(verifier);
+    let k = compute_js_k();
+    let public = ((k * &v) + G_2048.g.modpow(&b, &G_2048.n)) % &G_2048.n;
+    public.to_bytes_be()
+}
+
+fn compute_premaster_secret(
+    server_private_key: &[u8],
+    verifier: &[u8],
+    client_public_key_a: &[u8],
+    server_public_key_b: &[u8],
+) -> Option<Vec<u8>> {
+    let a_pub = BigUint::from_bytes_be(client_public_key_a);
+    if &a_pub % &G_2048.n == BigUint::default() {
+        return None;
+    }
+
+    let b = BigUint::from_bytes_be(server_private_key);
+    let v = BigUint::from_bytes_be(verifier);
+    let u = compute_u(client_public_key_a, server_public_key_b);
+    let premaster = (a_pub * v.modpow(&u, &G_2048.n))
+        .modpow(&b, &G_2048.n)
+        .to_bytes_be();
+    Some(premaster)
+}
+
+fn compute_js_client_proof(
+    identity: &[u8],
+    salt: &[u8],
+    client_public_key_a: &[u8],
+    server_public_key_b: &[u8],
+    premaster_secret: &[u8],
+) -> Vec<u8> {
+    let h_n = sha256_bytes(&[&G_2048.n.to_bytes_be()]);
+    let h_g = sha256_bytes(&[&G_2048.g.to_bytes_be()]);
+    let h_i = sha256_bytes(&[identity]);
+    let session_key = sha256_bytes(&[premaster_secret]);
+    let h_n_xor_h_g = xor_bytes(&h_n, &h_g);
+
+    sha256_bytes(&[
+        &h_n_xor_h_g,
+        &h_i,
+        salt,
+        client_public_key_a,
+        server_public_key_b,
+        &session_key,
+    ])
 }
 
 impl Default for SrpService {
@@ -202,8 +280,53 @@ mod tests {
             },
         );
 
-        let result = service.verify_challenge(&challenge_id, "other@example.com", vec![1], vec![2]);
+        let result = service.verify_challenge(
+            &challenge_id,
+            "other@example.com",
+            b"salt",
+            vec![1],
+            vec![2],
+        );
 
         assert!(matches!(result, Err(AppError::Unauthorized)));
+    }
+
+    #[test]
+    fn compute_js_client_proof_matches_known_js_vector() {
+        let identity = b"gerrxt07@proton.me";
+        let salt = hex::decode(
+            "f20bfa943221cf583e1a979838209b6cd34ae1bb5fbd5b9ed104ab8d8961f065",
+        )
+        .unwrap();
+        let verifier = hex::decode(
+            "76f8344885f3f668d973dc8b2d9cfd5e8f526d70d98eab1050c42cb712a9e2af34fe29209fec620ce5afbe35ffa5328550fa71728c6c22e036a0bbb24885c554592b5f2cd41c00565e934968484cb2a4af406cb0425e7ae3347762dd127fe89a734f0fcc907c27e58dc989ea352c8484b84ac8a629f3b4eeadd76d26a003d57e13834e2fc12ab88ce7d64623a2f8451e4ecfbba4697e7d77c0e22dc10a7691b8652e0dc2eb4b3b205994328239a347d95b46e7e6a66cc8aeda0895bbee4ee9bee542c3655e97ddc7368386395369ad9e61967ffe0c6c62d9425b826b8cdfc64ab3640e8609f982acfc461fb3cf2b60417662a12002cec9db1a72c275e80b57b1",
+        )
+        .unwrap();
+        let client_public_key_a = hex::decode(
+            "3a9c06a4c898a5c5d153a95b344b4750997ee4752f89796fed01a9d3f0ae08722bcb3d0292dbb5dba740e47195599bebc2d0b5fcb3662f82bdccd6412218773aa46310a39f42b7c5c6116446bf17156583c50d7f72a81cb29d485937c0209a47a3b82cba31ca8314a635d72ed72af56f37750387406593b733cb45f2b49cb8d1dd4c1524f4d6c1d3beb5a34922b22dfdd4fb8aa5e3a57b12a6588a4308327348828141964f2a8ff8e065f1f5457da7bb9fef4006412d49115bab6926648e73bc0af52fc92f8b7df9e6e8dd374a9e1bb815ffeea84cc876bf0f48be15694cdc9538979e3fbf7a0ebd2456793e6e7bc6d3583d607eecac046d292e8aa3ef535386",
+        )
+        .unwrap();
+        let server_private_key = [7u8; 32];
+        let server_public_key_b = compute_server_public_ephemeral(&server_private_key, &verifier);
+        let premaster_secret = compute_premaster_secret(
+            &server_private_key,
+            &verifier,
+            &client_public_key_a,
+            &server_public_key_b,
+        )
+        .unwrap();
+
+        let proof = compute_js_client_proof(
+            identity,
+            &salt,
+            &client_public_key_a,
+            &server_public_key_b,
+            &premaster_secret,
+        );
+
+        assert_eq!(
+            hex::encode(proof),
+            "eabe208672d6e91bad43d12888b9a994d82aa3a7526f65fedc1d1d8368033848"
+        );
     }
 }

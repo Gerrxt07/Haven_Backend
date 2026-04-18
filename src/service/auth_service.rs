@@ -215,6 +215,16 @@ impl AuthService {
             return Err(AppError::Forbidden);
         }
 
+        let salt = user
+            .srp_salt
+            .as_deref()
+            .ok_or_else(|| AppError::Unauthorized)
+            .and_then(|salt| {
+                STANDARD
+                    .decode(salt)
+                    .map_err(|_| AppError::BadRequest("invalid salt".to_string()))
+            })?;
+
         // Decode client public key and proof from base64
         let client_public_key_a = STANDARD
             .decode(&payload.client_public_key_a)
@@ -230,6 +240,7 @@ impl AuthService {
             .verify_challenge(
                 &challenge_id,
                 &normalized_email,
+                &salt,
                 client_public_key_a,
                 client_proof_m1,
             )
