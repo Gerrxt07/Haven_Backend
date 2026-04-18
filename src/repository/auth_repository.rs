@@ -12,6 +12,7 @@ pub struct NewRegistrationUser {
     pub email: String,
     pub srp_salt: String,
     pub srp_verifier: String,
+    pub password_hash: Option<String>,
     pub date_of_birth: NaiveDate,
     pub locale: String,
 }
@@ -23,8 +24,8 @@ pub async fn insert_user_for_registration(
     let result = sqlx::query_as::<_, AuthUserResponse>(
         r#"
         INSERT INTO users (
-            id, username, display_name, email, srp_salt, srp_verifier, date_of_birth, locale
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            id, username, display_name, email, srp_salt, srp_verifier, password_hash, date_of_birth, locale
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id,
             username,
             display_name,
@@ -43,6 +44,7 @@ pub async fn insert_user_for_registration(
     .bind(new_user.email)
     .bind(new_user.srp_salt)
     .bind(new_user.srp_verifier)
+    .bind(new_user.password_hash)
     .bind(new_user.date_of_birth)
     .bind(new_user.locale)
     .fetch_one(pool)
@@ -272,10 +274,7 @@ pub struct EmailVerificationRow {
     pub created_at: DateTime<Utc>,
 }
 
-pub async fn delete_email_verification_codes(
-    pool: &PgPool,
-    user_id: i64,
-) -> Result<(), AppError> {
+pub async fn delete_email_verification_codes(pool: &PgPool, user_id: i64) -> Result<(), AppError> {
     sqlx::query("DELETE FROM email_verification_codes WHERE user_id = $1")
         .bind(user_id)
         .execute(pool)

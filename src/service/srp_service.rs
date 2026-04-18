@@ -1,4 +1,8 @@
 use crate::error::AppError;
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use dashmap::DashMap;
 use rand::RngCore;
 use srp::groups::G_4096;
@@ -10,10 +14,8 @@ use std::time::{Duration, Instant};
 #[derive(Clone)]
 pub struct SrpEphemeralData {
     pub server_private_key: Vec<u8>,
-    pub server_public_key_b: Vec<u8>,
     pub client_email: String,
     pub verifier: Vec<u8>,
-    pub salt: Vec<u8>,
     pub created_at: Instant,
 }
 
@@ -33,10 +35,10 @@ impl SrpService {
             ephemeral_store: Arc::new(DashMap::new()),
             ttl: Duration::from_secs(300), // 5 minutes
         };
-        
+
         // Start cleanup task
         service.start_cleanup_task();
-        
+
         service
     }
 
@@ -44,22 +46,20 @@ impl SrpService {
     pub fn generate_challenge_id() -> String {
         let mut bytes = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut bytes);
-        base64::encode(bytes)
+        URL_SAFE_NO_PAD.encode(bytes)
     }
 
     /// Step 1: Generate server ephemeral keys for login challenge
-    /// 
+    ///
     /// # Arguments
     /// * `email` - User's email (used as identity)
-    /// * `salt` - SRP salt (base64 decoded)
     /// * `verifier` - SRP verifier (base64 decoded)
-    /// 
+    ///
     /// # Returns
     /// * `(challenge_id, server_public_key_b)` - Store challenge_id temporarily, return server_public_key_b to client
     pub fn generate_challenge(
         &self,
         email: &str,
-        salt: Vec<u8>,
         verifier: Vec<u8>,
     ) -> Result<(String, String), AppError> {
         // Create SRP server with 4096-bit group
@@ -78,33 +78,33 @@ impl SrpService {
         // Store ephemeral data
         let ephemeral_data = SrpEphemeralData {
             server_private_key: server_private_key.to_vec(),
-            server_public_key_b: server_public_key_b.clone(),
             client_email: email.to_string(),
             verifier,
-            salt,
             created_at: Instant::now(),
         };
 
-        self.ephemeral_store.insert(challenge_id.clone(), ephemeral_data);
+        self.ephemeral_store
+            .insert(challenge_id.clone(), ephemeral_data);
 
         // Encode public key for transmission
-        let server_public_key_b_b64 = base64::encode(&server_public_key_b);
+        let server_public_key_b_b64 = STANDARD.encode(&server_public_key_b);
 
         Ok((challenge_id, server_public_key_b_b64))
     }
 
     /// Step 2: Verify client proof and generate server proof
-    /// 
+    ///
     /// # Arguments
     /// * `challenge_id` - The challenge ID from step 1
     /// * `client_public_key_a` - Client's public key A (base64 decoded)
     /// * `client_proof_m1` - Client's proof M1 (base64 decoded)
-    /// 
+    ///
     /// # Returns
     /// * `server_proof_m2` - Server's proof M2 to send to client
     pub fn verify_challenge(
         &self,
         challenge_id: &str,
+        expected_email: &str,
         client_public_key_a: Vec<u8>,
         client_proof_m1: Vec<u8>,
     ) -> Result<Vec<u8>, AppError> {
@@ -120,18 +120,26 @@ impl SrpService {
             return Err(AppError::Unauthorized);
         }
 
+        if ephemeral_data.client_email != expected_email {
+            return Err(AppError::Unauthorized);
+        }
+
         // Create SRP server
         let server = SrpServer::<sha2::Sha256>::new(&G_4096);
 
         // Process client reply to create verifier
-        let verifier = server.process_reply(
-            &ephemeral_data.server_private_key,
-            &ephemeral_data.verifier,
-            &client_public_key_a,
-        ).map_err(|_| AppError::Unauthorized)?;
+        let verifier = server
+            .process_reply(
+                &ephemeral_data.server_private_key,
+                &ephemeral_data.verifier,
+                &client_public_key_a,
+            )
+            .map_err(|_| AppError::Unauthorized)?;
 
         // Verify client proof (M1)
-        verifier.verify_client(&client_proof_m1).map_err(|_| AppError::Unauthorized)?;
+        verifier
+            .verify_client(&client_proof_m1)
+            .map_err(|_| AppError::Unauthorized)?;
 
         // Get server proof (M2) to send to client
         let server_proof_m2 = verifier.proof().to_vec();
@@ -148,7 +156,7 @@ impl SrpService {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                
+
                 let now = Instant::now();
                 store.retain(|_, data| now.duration_since(data.created_at) < ttl);
             }
@@ -172,5 +180,30 @@ mod tests {
         let id2 = SrpService::generate_challenge_id();
         assert_ne!(id1, id2);
         assert!(!id1.is_empty());
+        assert!(!id1.contains('+'));
+        assert!(!id1.contains('/'));
+        assert!(!id1.contains('='));
+    }
+
+    #[test]
+    fn reject_mismatched_identity() {
+        let service = SrpService {
+            ephemeral_store: Arc::new(DashMap::new()),
+            ttl: Duration::from_secs(300),
+        };
+        let challenge_id = "challenge".to_string();
+        service.ephemeral_store.insert(
+            challenge_id.clone(),
+            SrpEphemeralData {
+                server_private_key: vec![1],
+                client_email: "user@example.com".to_string(),
+                verifier: vec![3],
+                created_at: Instant::now(),
+            },
+        );
+
+        let result = service.verify_challenge(&challenge_id, "other@example.com", vec![1], vec![2]);
+
+        assert!(matches!(result, Err(AppError::Unauthorized)));
     }
 }

@@ -19,8 +19,8 @@ use auth::TokenManager;
 use axum::{middleware::from_fn_with_state, routing::get, Router};
 use config::Config;
 use crypto::CryptoManager;
-use email::EmailClient;
 use deadpool_redis::Runtime;
+use email::EmailClient;
 use security::{rate_limit_middleware, SimpleRateLimiter};
 use service::realtime_service::RealtimeService;
 use service::srp_service::SrpService;
@@ -39,6 +39,8 @@ use tower_http::{
 };
 use tracing::{info, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+const SRP_CHALLENGE_HEADER: &str = "x-srp-challenge-id";
 
 fn is_valid_db_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -184,6 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .allow_headers([
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
+                SRP_CHALLENGE_HEADER.parse().expect("valid SRP header name"),
             ])
             .allow_origin(Any)
     } else {
@@ -198,6 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .allow_headers([
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
+                SRP_CHALLENGE_HEADER.parse().expect("valid SRP header name"),
             ])
             .allow_origin(origins)
     };

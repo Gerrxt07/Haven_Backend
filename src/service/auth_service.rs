@@ -3,21 +3,22 @@ use crate::{
     domain::auth::{
         AuthUser, AuthUserResponse, EmailVerificationConfirmRequest, EmailVerificationRequest,
         LoginChallengeRequest, LoginChallengeResponse, LoginRequest, LoginVerifyRequest,
-        LoginVerifyResponse, RefreshRequest, RegisterRequest, StatusResponse, TwoFactorConfirmRequest,
-        TwoFactorDisableRequest, TwoFactorSetupResponse,
+        LoginVerifyResponse, RefreshRequest, RegisterRequest, StatusResponse,
+        TwoFactorConfirmRequest, TwoFactorDisableRequest, TwoFactorSetupResponse,
     },
     error::AppError,
     repository::{auth_repository, cache_repository},
     state::AppState,
 };
 use axum::http::HeaderMap;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use urlencoding::encode;
 use validator::Validate;
-use serde::{Deserialize, Serialize};
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -30,6 +31,8 @@ const TOTP_SETUP_TTL_MINUTES: i64 = 10;
 const BACKUP_CODE_COUNT: usize = 10;
 const BACKUP_CODE_LENGTH: usize = 10;
 const AUTH_STATUS_CACHE_TTL_SECONDS: u64 = 120;
+const LEGACY_PASSWORD_MIN_LEN: usize = 10;
+const LEGACY_PASSWORD_MAX_LEN: usize = 128;
 
 #[derive(Serialize, Deserialize)]
 struct CachedAuthStatus {
@@ -52,7 +55,17 @@ impl AuthService {
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
+        if let Some(password) = payload.password.as_deref() {
+            if !(LEGACY_PASSWORD_MIN_LEN..=LEGACY_PASSWORD_MAX_LEN).contains(&password.len()) {
+                return Err(AppError::Validation(
+                    "password must be between 10 and 128 characters".to_string(),
+                ));
+            }
+        }
+
         let user_id = generate_id();
+
+        let password_hash = payload.password.as_deref().map(hash_password).transpose()?;
 
         let user = auth_repository::insert_user_for_registration(
             &self.state.pg_pool,
@@ -63,6 +76,7 @@ impl AuthService {
                 email: payload.email.trim().to_lowercase(),
                 srp_salt: payload.srp_salt,
                 srp_verifier: payload.srp_verifier,
+                password_hash,
                 date_of_birth: payload.date_of_birth,
                 locale: payload.locale.trim().to_lowercase(),
             },
@@ -89,23 +103,21 @@ impl AuthService {
 
         let normalized_email = payload.email.trim().to_lowercase();
 
-        let user = match auth_repository::find_user_auth_by_email(
-            &self.state.pg_pool,
-            &normalized_email,
-        )
-        .await?
-        {
-            Some(user) => user,
-            None => {
-                tracing::warn!(
-                    event = "auth.login.challenge.failed",
-                    email = normalized_email,
-                    reason = "user_not_found",
-                    "invalid credentials"
-                );
-                return Err(AppError::Unauthorized);
-            }
-        };
+        let user =
+            match auth_repository::find_user_auth_by_email(&self.state.pg_pool, &normalized_email)
+                .await?
+            {
+                Some(user) => user,
+                None => {
+                    tracing::warn!(
+                        event = "auth.login.challenge.failed",
+                        email = normalized_email,
+                        reason = "user_not_found",
+                        "invalid credentials"
+                    );
+                    return Err(AppError::Unauthorized);
+                }
+            };
 
         if user.account_status != "active" {
             tracing::warn!(
@@ -118,24 +130,42 @@ impl AuthService {
         }
 
         // Get SRP salt and verifier
-        let salt = user
-            .srp_salt
-            .ok_or_else(|| AppError::Service("SRP salt not found".to_string()))?;
-        let verifier = user
-            .srp_verifier
-            .ok_or_else(|| AppError::Service("SRP verifier not found".to_string()))?;
+        let (salt, verifier) = match (user.srp_salt, user.srp_verifier) {
+            (Some(salt), Some(verifier)) => (salt, verifier),
+            _ => {
+                tracing::warn!(
+                    event = "auth.login.challenge.failed",
+                    user_id = user.id,
+                    reason = "srp_not_configured",
+                    "SRP login attempted for account without SRP credentials"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        };
 
         // Decode from base64
-        let salt_bytes = base64::decode(&salt).map_err(|_| AppError::BadRequest("invalid salt".to_string()))?;
-        let verifier_bytes = base64::decode(&verifier)
+        let _salt_bytes = STANDARD
+            .decode(&salt)
+            .map_err(|_| AppError::BadRequest("invalid salt".to_string()))?;
+        let verifier_bytes = STANDARD
+            .decode(&verifier)
             .map_err(|_| AppError::BadRequest("invalid verifier".to_string()))?;
 
         // Generate SRP challenge
         let (challenge_id, server_public_key_b) = self
             .state
             .srp_service
-            .generate_challenge(&normalized_email, salt_bytes, verifier_bytes)
-            .map_err(|e| AppError::Service(format!("SRP challenge generation failed: {:?}", e)))?;
+            .generate_challenge(&normalized_email, verifier_bytes)
+            .map_err(|error| {
+                tracing::error!(
+                    event = "auth.login.challenge.failed",
+                    user_id = user.id,
+                    reason = "srp_generation_failed",
+                    ?error,
+                    "failed to generate SRP challenge"
+                );
+                AppError::Unauthorized
+            })?;
 
         tracing::info!(
             event = "auth.login.challenge",
@@ -165,39 +195,44 @@ impl AuthService {
 
         let normalized_email = payload.email.trim().to_lowercase();
 
-        let user = match auth_repository::find_user_auth_by_email(
-            &self.state.pg_pool,
-            &normalized_email,
-        )
-        .await?
-        {
-            Some(user) => user,
-            None => {
-                tracing::warn!(
-                    event = "auth.login.verify.failed",
-                    email = normalized_email,
-                    reason = "user_not_found",
-                    "invalid credentials"
-                );
-                return Err(AppError::Unauthorized);
-            }
-        };
+        let user =
+            match auth_repository::find_user_auth_by_email(&self.state.pg_pool, &normalized_email)
+                .await?
+            {
+                Some(user) => user,
+                None => {
+                    tracing::warn!(
+                        event = "auth.login.verify.failed",
+                        email = normalized_email,
+                        reason = "user_not_found",
+                        "invalid credentials"
+                    );
+                    return Err(AppError::Unauthorized);
+                }
+            };
 
         if user.account_status != "active" {
             return Err(AppError::Forbidden);
         }
 
         // Decode client public key and proof from base64
-        let client_public_key_a = base64::decode(&payload.client_public_key_a)
+        let client_public_key_a = STANDARD
+            .decode(&payload.client_public_key_a)
             .map_err(|_| AppError::BadRequest("invalid client public key".to_string()))?;
-        let client_proof_m1 = base64::decode(&payload.client_proof_m1)
+        let client_proof_m1 = STANDARD
+            .decode(&payload.client_proof_m1)
             .map_err(|_| AppError::BadRequest("invalid client proof".to_string()))?;
 
         // Verify client proof and get server proof
         let server_proof_m2 = self
             .state
             .srp_service
-            .verify_challenge(&challenge_id, client_public_key_a, client_proof_m1)
+            .verify_challenge(
+                &challenge_id,
+                &normalized_email,
+                client_public_key_a,
+                client_proof_m1,
+            )
             .map_err(|e| {
                 tracing::warn!(
                     event = "auth.login.verify.failed",
@@ -211,10 +246,7 @@ impl AuthService {
 
         // Handle 2FA if enabled
         if let Some(secret) = &user.totp_secret {
-            match (
-                payload.totp_code.as_deref(),
-                payload.backup_code.as_deref(),
-            ) {
+            match (payload.totp_code.as_deref(), payload.backup_code.as_deref()) {
                 (Some(code), _) => {
                     if !verify_totp_code(secret, code)? {
                         tracing::warn!(
@@ -228,8 +260,8 @@ impl AuthService {
                 }
                 (None, Some(backup_code)) => {
                     let current_codes = user.totp_backup_codes.clone().unwrap_or_default();
-                    let updated_codes =
-                        consume_backup_code(&current_codes, backup_code).ok_or_else(|| {
+                    let updated_codes = consume_backup_code(&current_codes, backup_code)
+                        .ok_or_else(|| {
                             tracing::warn!(
                                 event = "auth.login.verify.failed",
                                 email = payload.email,
@@ -281,7 +313,7 @@ impl AuthService {
         );
 
         Ok(LoginVerifyResponse {
-            server_proof_m2: base64::encode(server_proof_m2),
+            server_proof_m2: STANDARD.encode(server_proof_m2),
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
             token_type: "Bearer",
@@ -296,23 +328,21 @@ impl AuthService {
 
         let normalized_email = payload.email.trim().to_lowercase();
 
-        let user = match auth_repository::find_user_auth_by_email(
-            &self.state.pg_pool,
-            &normalized_email,
-        )
-        .await?
-        {
-            Some(user) => user,
-            None => {
-                tracing::warn!(
-                    event = "auth.login.failed",
-                    email = normalized_email,
-                    reason = "user_not_found",
-                    "invalid credentials"
-                );
-                return Err(AppError::Unauthorized);
-            }
-        };
+        let user =
+            match auth_repository::find_user_auth_by_email(&self.state.pg_pool, &normalized_email)
+                .await?
+            {
+                Some(user) => user,
+                None => {
+                    tracing::warn!(
+                        event = "auth.login.failed",
+                        email = normalized_email,
+                        reason = "user_not_found",
+                        "invalid credentials"
+                    );
+                    return Err(AppError::Unauthorized);
+                }
+            };
 
         if user.account_status != "active" {
             tracing::warn!(
@@ -325,9 +355,16 @@ impl AuthService {
         }
 
         // Legacy password verification (for backward compatibility during transition)
-        let password_hash = user.password_hash
-            .ok_or_else(|| AppError::Service("Password hash not found - user needs to migrate to SRP".to_string()))?;
-        
+        let password_hash = user.password_hash.ok_or_else(|| {
+            tracing::warn!(
+                event = "auth.login.failed",
+                user_id = user.id,
+                reason = "password_login_not_available",
+                "legacy password login attempted for SRP-only account"
+            );
+            AppError::Unauthorized
+        })?;
+
         if !verify_password(&password_hash, &payload.password) {
             tracing::warn!(
                 event = "auth.login.failed",
@@ -338,10 +375,7 @@ impl AuthService {
         }
 
         if let Some(secret) = &user.totp_secret {
-            match (
-                payload.totp_code.as_deref(),
-                payload.backup_code.as_deref(),
-            ) {
+            match (payload.totp_code.as_deref(), payload.backup_code.as_deref()) {
                 (Some(code), _) => {
                     if !verify_totp_code(secret, code)? {
                         tracing::warn!(
@@ -355,8 +389,8 @@ impl AuthService {
                 }
                 (None, Some(backup_code)) => {
                     let current_codes = user.totp_backup_codes.clone().unwrap_or_default();
-                    let updated_codes =
-                        consume_backup_code(&current_codes, backup_code).ok_or_else(|| {
+                    let updated_codes = consume_backup_code(&current_codes, backup_code)
+                        .ok_or_else(|| {
                             tracing::warn!(
                                 event = "auth.login.failed",
                                 email = payload.email,
@@ -503,7 +537,12 @@ impl AuthService {
         }
 
         let email_key = format!("email-verify:email:{normalized_email}");
-        if !self.state.email_verify_email_limiter.allow(&email_key).await {
+        if !self
+            .state
+            .email_verify_email_limiter
+            .allow(&email_key)
+            .await
+        {
             return Err(AppError::TooManyRequests);
         }
 
@@ -582,19 +621,20 @@ impl AuthService {
                 .ok_or_else(|| AppError::BadRequest("verification code not found".to_string()))?;
 
         if latest_code.consumed_at.is_some() || latest_code.expires_at < Utc::now() {
-            return Err(AppError::BadRequest("verification code expired".to_string()));
+            return Err(AppError::BadRequest(
+                "verification code expired".to_string(),
+            ));
         }
 
         let incoming_hash = sha256_hex(payload.code.trim());
         if incoming_hash != latest_code.code_hash {
-            return Err(AppError::BadRequest("invalid verification code".to_string()));
+            return Err(AppError::BadRequest(
+                "invalid verification code".to_string(),
+            ));
         }
 
-        auth_repository::mark_email_verification_code_consumed(
-            &self.state.pg_pool,
-            latest_code.id,
-        )
-        .await?;
+        auth_repository::mark_email_verification_code_consumed(&self.state.pg_pool, latest_code.id)
+            .await?;
         auth_repository::set_email_verified(&self.state.pg_pool, user.id).await?;
 
         Ok(StatusResponse { status: "verified" })
@@ -605,8 +645,7 @@ impl AuthService {
         headers: &HeaderMap,
     ) -> Result<TwoFactorSetupResponse, AppError> {
         let user = self.authenticate_from_headers(headers).await?;
-        let current =
-            auth_repository::find_user_auth_by_id(&self.state.pg_pool, user.id).await?;
+        let current = auth_repository::find_user_auth_by_id(&self.state.pg_pool, user.id).await?;
 
         if current.totp_secret.is_some() {
             return Err(AppError::Conflict("2fa already enabled".to_string()));
@@ -681,8 +720,7 @@ impl AuthService {
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
         let user = self.authenticate_from_headers(headers).await?;
-        let current =
-            auth_repository::find_user_auth_by_id(&self.state.pg_pool, user.id).await?;
+        let current = auth_repository::find_user_auth_by_id(&self.state.pg_pool, user.id).await?;
 
         let secret = current
             .totp_secret
@@ -730,15 +768,18 @@ impl AuthService {
             .parse_and_validate(&bearer, "access")?;
 
         let status_cache_key = format!("cache:auth:status:{}", claims.user_id);
-        let status_row = if let Some(cached) =
-            cache_repository::get_json::<CachedAuthStatus>(&self.state.redis_pool, &status_cache_key)
-                .await?
+        let status_row = if let Some(cached) = cache_repository::get_json::<CachedAuthStatus>(
+            &self.state.redis_pool,
+            &status_cache_key,
+        )
+        .await?
         {
             (cached.account_status, cached.token_version)
         } else {
-            let row = auth_repository::find_status_and_token_version(&self.state.pg_pool, claims.user_id)
-                .await?
-                .ok_or(AppError::Unauthorized)?;
+            let row =
+                auth_repository::find_status_and_token_version(&self.state.pg_pool, claims.user_id)
+                    .await?
+                    .ok_or(AppError::Unauthorized)?;
 
             let cached = CachedAuthStatus {
                 account_status: row.0.clone(),
@@ -843,11 +884,8 @@ fn consume_backup_code(stored_hashes: &[String], provided: &str) -> Option<Vec<S
 }
 
 fn verify_totp_code(secret_base32: &str, code: &str) -> Result<bool, AppError> {
-    let secret = base32::decode(
-        base32::Alphabet::Rfc4648 { padding: false },
-        secret_base32,
-    )
-    .ok_or_else(|| AppError::BadRequest("invalid 2fa secret".to_string()))?;
+    let secret = base32::decode(base32::Alphabet::Rfc4648 { padding: false }, secret_base32)
+        .ok_or_else(|| AppError::BadRequest("invalid 2fa secret".to_string()))?;
 
     let now = Utc::now().timestamp();
     for offset in [-1, 0, 1] {
