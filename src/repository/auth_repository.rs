@@ -10,7 +10,8 @@ pub struct NewRegistrationUser {
     pub username: String,
     pub display_name: String,
     pub email: String,
-    pub password_hash: String,
+    pub srp_salt: String,
+    pub srp_verifier: String,
     pub date_of_birth: NaiveDate,
     pub locale: String,
 }
@@ -22,8 +23,8 @@ pub async fn insert_user_for_registration(
     let result = sqlx::query_as::<_, AuthUserResponse>(
         r#"
         INSERT INTO users (
-            id, username, display_name, email, password_hash, date_of_birth, locale
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            id, username, display_name, email, srp_salt, srp_verifier, date_of_birth, locale
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id,
             username,
             display_name,
@@ -40,7 +41,8 @@ pub async fn insert_user_for_registration(
     .bind(new_user.username)
     .bind(new_user.display_name)
     .bind(new_user.email)
-    .bind(new_user.password_hash)
+    .bind(new_user.srp_salt)
+    .bind(new_user.srp_verifier)
     .bind(new_user.date_of_birth)
     .bind(new_user.locale)
     .fetch_one(pool)
@@ -61,7 +63,7 @@ pub async fn find_user_auth_by_email(
 ) -> Result<Option<UserAuthRow>, AppError> {
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
-        SELECT id, password_hash, account_status, token_version, totp_secret, totp_backup_codes
+        SELECT id, srp_salt, srp_verifier, password_hash, account_status, token_version, totp_secret, totp_backup_codes
         FROM users
         WHERE email = $1
         "#,
@@ -76,7 +78,7 @@ pub async fn find_user_auth_by_email(
 pub async fn find_user_auth_by_id(pool: &PgPool, id: i64) -> Result<UserAuthRow, AppError> {
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
-        SELECT id, password_hash, account_status, token_version, totp_secret, totp_backup_codes
+        SELECT id, srp_salt, srp_verifier, password_hash, account_status, token_version, totp_secret, totp_backup_codes
         FROM users
         WHERE id = $1
         "#,

@@ -1,4 +1,4 @@
-use crate::{auth::TokenManager, crypto::CryptoManager, email::EmailClient, security::SimpleRateLimiter};
+use crate::{auth::TokenManager, crypto::CryptoManager, email::EmailClient, security::SimpleRateLimiter, service::srp_service::SrpService};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -17,4 +17,5 @@ pub struct AppState {
     pub email_verify_email_limiter: Arc<SimpleRateLimiter>,
     pub realtime_tx: broadcast::Sender<RealtimeEvent>,
     pub avatar_storage_dir: String,
+    pub srp_service: Arc<SrpService>,
 }

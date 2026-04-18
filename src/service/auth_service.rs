@@ -2,7 +2,8 @@ use crate::{
     auth::{generate_id, hash_password, sha256_hex, verify_password, AuthTokens},
     domain::auth::{
         AuthUser, AuthUserResponse, EmailVerificationConfirmRequest, EmailVerificationRequest,
-        LoginRequest, RefreshRequest, RegisterRequest, StatusResponse, TwoFactorConfirmRequest,
+        LoginChallengeRequest, LoginChallengeResponse, LoginRequest, LoginVerifyRequest,
+        LoginVerifyResponse, RefreshRequest, RegisterRequest, StatusResponse, TwoFactorConfirmRequest,
         TwoFactorDisableRequest, TwoFactorSetupResponse,
     },
     error::AppError,
@@ -51,7 +52,6 @@ impl AuthService {
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
-        let password_hash = hash_password(&payload.password)?;
         let user_id = generate_id();
 
         let user = auth_repository::insert_user_for_registration(
@@ -61,7 +61,8 @@ impl AuthService {
                 username: payload.username.trim().to_lowercase(),
                 display_name: payload.display_name.trim().to_string(),
                 email: payload.email.trim().to_lowercase(),
-                password_hash,
+                srp_salt: payload.srp_salt,
+                srp_verifier: payload.srp_verifier,
                 date_of_birth: payload.date_of_birth,
                 locale: payload.locale.trim().to_lowercase(),
             },
@@ -75,6 +76,217 @@ impl AuthService {
             "user registered"
         );
         Ok(user)
+    }
+
+    /// Step 1 of SRP login: Generate challenge
+    pub async fn login_challenge(
+        &self,
+        payload: LoginChallengeRequest,
+    ) -> Result<(String, LoginChallengeResponse), AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        let normalized_email = payload.email.trim().to_lowercase();
+
+        let user = match auth_repository::find_user_auth_by_email(
+            &self.state.pg_pool,
+            &normalized_email,
+        )
+        .await?
+        {
+            Some(user) => user,
+            None => {
+                tracing::warn!(
+                    event = "auth.login.challenge.failed",
+                    email = normalized_email,
+                    reason = "user_not_found",
+                    "invalid credentials"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        };
+
+        if user.account_status != "active" {
+            tracing::warn!(
+                event = "auth.login.challenge.blocked",
+                user_id = user.id,
+                status = user.account_status,
+                "blocked login due to account status"
+            );
+            return Err(AppError::Forbidden);
+        }
+
+        // Get SRP salt and verifier
+        let salt = user
+            .srp_salt
+            .ok_or_else(|| AppError::Service("SRP salt not found".to_string()))?;
+        let verifier = user
+            .srp_verifier
+            .ok_or_else(|| AppError::Service("SRP verifier not found".to_string()))?;
+
+        // Decode from base64
+        let salt_bytes = base64::decode(&salt).map_err(|_| AppError::BadRequest("invalid salt".to_string()))?;
+        let verifier_bytes = base64::decode(&verifier)
+            .map_err(|_| AppError::BadRequest("invalid verifier".to_string()))?;
+
+        // Generate SRP challenge
+        let (challenge_id, server_public_key_b) = self
+            .state
+            .srp_service
+            .generate_challenge(&normalized_email, salt_bytes, verifier_bytes)
+            .map_err(|e| AppError::Service(format!("SRP challenge generation failed: {:?}", e)))?;
+
+        tracing::info!(
+            event = "auth.login.challenge",
+            user_id = user.id,
+            "SRP login challenge generated"
+        );
+
+        Ok((
+            challenge_id.clone(),
+            LoginChallengeResponse {
+                challenge_id,
+                srp_salt: salt,
+                server_public_key_b,
+            },
+        ))
+    }
+
+    /// Step 2 of SRP login: Verify client proof and issue tokens
+    pub async fn login_verify(
+        &self,
+        challenge_id: String,
+        payload: LoginVerifyRequest,
+    ) -> Result<LoginVerifyResponse, AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        let normalized_email = payload.email.trim().to_lowercase();
+
+        let user = match auth_repository::find_user_auth_by_email(
+            &self.state.pg_pool,
+            &normalized_email,
+        )
+        .await?
+        {
+            Some(user) => user,
+            None => {
+                tracing::warn!(
+                    event = "auth.login.verify.failed",
+                    email = normalized_email,
+                    reason = "user_not_found",
+                    "invalid credentials"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        };
+
+        if user.account_status != "active" {
+            return Err(AppError::Forbidden);
+        }
+
+        // Decode client public key and proof from base64
+        let client_public_key_a = base64::decode(&payload.client_public_key_a)
+            .map_err(|_| AppError::BadRequest("invalid client public key".to_string()))?;
+        let client_proof_m1 = base64::decode(&payload.client_proof_m1)
+            .map_err(|_| AppError::BadRequest("invalid client proof".to_string()))?;
+
+        // Verify client proof and get server proof
+        let server_proof_m2 = self
+            .state
+            .srp_service
+            .verify_challenge(&challenge_id, client_public_key_a, client_proof_m1)
+            .map_err(|e| {
+                tracing::warn!(
+                    event = "auth.login.verify.failed",
+                    user_id = user.id,
+                    reason = "invalid_proof",
+                    "SRP verification failed: {:?}",
+                    e
+                );
+                AppError::Unauthorized
+            })?;
+
+        // Handle 2FA if enabled
+        if let Some(secret) = &user.totp_secret {
+            match (
+                payload.totp_code.as_deref(),
+                payload.backup_code.as_deref(),
+            ) {
+                (Some(code), _) => {
+                    if !verify_totp_code(secret, code)? {
+                        tracing::warn!(
+                            event = "auth.login.verify.failed",
+                            email = payload.email,
+                            reason = "invalid_totp",
+                            "invalid 2fa code"
+                        );
+                        return Err(AppError::Unauthorized);
+                    }
+                }
+                (None, Some(backup_code)) => {
+                    let current_codes = user.totp_backup_codes.clone().unwrap_or_default();
+                    let updated_codes =
+                        consume_backup_code(&current_codes, backup_code).ok_or_else(|| {
+                            tracing::warn!(
+                                event = "auth.login.verify.failed",
+                                email = payload.email,
+                                reason = "invalid_backup_code",
+                                "invalid backup code"
+                            );
+                            AppError::Unauthorized
+                        })?;
+                    auth_repository::update_backup_codes(
+                        &self.state.pg_pool,
+                        user.id,
+                        updated_codes,
+                    )
+                    .await?;
+                }
+                (None, None) => {
+                    return Err(AppError::TwoFactorRequired);
+                }
+            }
+        }
+
+        let session_id = generate_id();
+        let tokens =
+            self.state
+                .token_manager
+                .issue_tokens(user.id, session_id, user.token_version)?;
+
+        let refresh_hash = sha256_hex(&tokens.refresh_token);
+        let refresh_expires =
+            Utc::now() + Duration::days(self.state.token_manager.refresh_ttl_days());
+
+        auth_repository::insert_auth_session(
+            &self.state.pg_pool,
+            session_id,
+            user.id,
+            refresh_hash,
+            refresh_expires,
+            user.token_version,
+        )
+        .await?;
+
+        auth_repository::update_last_login(&self.state.pg_pool, user.id).await?;
+
+        tracing::info!(
+            event = "auth.login.verify",
+            user_id = user.id,
+            session_id,
+            "SRP login successful"
+        );
+
+        Ok(LoginVerifyResponse {
+            server_proof_m2: base64::encode(server_proof_m2),
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            token_type: "Bearer",
+            expires_in_seconds: tokens.expires_in_seconds,
+        })
     }
 
     pub async fn login(&self, payload: LoginRequest) -> Result<AuthTokens, AppError> {
@@ -112,7 +324,11 @@ impl AuthService {
             return Err(AppError::Forbidden);
         }
 
-        if !verify_password(&user.password_hash, &payload.password) {
+        // Legacy password verification (for backward compatibility during transition)
+        let password_hash = user.password_hash
+            .ok_or_else(|| AppError::Service("Password hash not found - user needs to migrate to SRP".to_string()))?;
+        
+        if !verify_password(&password_hash, &payload.password) {
             tracing::warn!(
                 event = "auth.login.failed",
                 email = payload.email,

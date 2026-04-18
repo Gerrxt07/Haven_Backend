@@ -4,6 +4,7 @@ pub mod e2ee_service;
 pub mod friends_service;
 pub mod health_service;
 pub mod realtime_service;
+pub mod srp_service;
 pub mod user_service;
 
 use crate::state::AppState;
