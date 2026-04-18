@@ -1,8 +1,8 @@
 use crate::{
     domain::auth::{
-        EmailVerificationConfirmRequest, EmailVerificationRequest, LoginRequest, RefreshRequest,
-        RegisterRequest, StatusResponse, TwoFactorConfirmRequest, TwoFactorDisableRequest,
-        TwoFactorSetupResponse,
+        EmailVerificationConfirmRequest, EmailVerificationRequest, LoginChallengeRequest,
+        LoginRequest, LoginVerifyRequest, RefreshRequest, RegisterRequest, StatusResponse,
+        TwoFactorConfirmRequest, TwoFactorDisableRequest, TwoFactorSetupResponse,
     },
     error::AppError,
     service::ServiceFactory,
@@ -19,6 +19,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
+        .route("/auth/login/challenge", post(login_challenge))
+        .route("/auth/login/verify", post(login_verify))
         .route("/auth/refresh", post(refresh))
         .route("/auth/me", get(me))
         .route("/auth/email/verification/request", post(request_email_verification))
@@ -44,6 +46,33 @@ async fn login(
     let service = ServiceFactory::new(state).auth();
     let tokens = service.login(payload).await?;
     Ok(Json(tokens))
+}
+
+async fn login_challenge(
+    State(state): State<AppState>,
+    Json(payload): Json<LoginChallengeRequest>,
+) -> Result<Json<crate::domain::auth::LoginChallengeResponse>, AppError> {
+    let service = ServiceFactory::new(state).auth();
+    let (_, response) = service.login_challenge(payload).await?;
+    Ok(Json(response))
+}
+
+async fn login_verify(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<LoginVerifyRequest>,
+) -> Result<Json<crate::domain::auth::LoginVerifyResponse>, AppError> {
+    let service = ServiceFactory::new(state).auth();
+    
+    // Extract challenge_id from header (set by client)
+    let challenge_id = headers
+        .get("x-srp-challenge-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::BadRequest("Missing x-srp-challenge-id header".to_string()))?;
+    
+    let response = service.login_verify(challenge_id, payload).await?;
+    Ok(Json(response))
 }
 
 async fn refresh(

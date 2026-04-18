@@ -23,6 +23,7 @@ use email::EmailClient;
 use deadpool_redis::Runtime;
 use security::{rate_limit_middleware, SimpleRateLimiter};
 use service::realtime_service::RealtimeService;
+use service::srp_service::SrpService;
 use sqlx::{postgres::PgPoolOptions, Connection};
 use state::AppState;
 use std::net::SocketAddr;
@@ -157,6 +158,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let email_verify_email_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(900)));
     let (realtime_tx, _) = broadcast::channel(512);
 
+    let srp_service = Arc::new(SrpService::new());
+
     let state = AppState {
         pg_pool,
         redis_pool,
@@ -169,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         email_verify_email_limiter,
         realtime_tx,
         avatar_storage_dir: config.avatar_storage_dir.clone(),
+        srp_service,
     };
 
     RealtimeService::new(state.clone()).spawn_fanout_bridge();
