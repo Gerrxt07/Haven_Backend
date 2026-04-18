@@ -42,7 +42,8 @@ impl UserService {
 
     pub async fn get_user(&self, id: i64) -> Result<User, AppError> {
         let cache_key = format!("cache:user:profile:{id}");
-        if let Some(cached) = cache_repository::get_json::<User>(&self.state.redis_pool, &cache_key).await?
+        if let Some(cached) =
+            cache_repository::get_json::<User>(&self.state.redis_pool, &cache_key).await?
         {
             return Ok(cached);
         }

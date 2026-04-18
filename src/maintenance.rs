@@ -33,16 +33,19 @@ fn time_until_next_run(interval_hours: u32) -> Duration {
         (now.date_naive(), next_hour)
     } else {
         (
-            now.date_naive().succ_opt().unwrap_or_else(|| now.date_naive()),
+            now.date_naive()
+                .succ_opt()
+                .unwrap_or_else(|| now.date_naive()),
             0,
         )
     };
 
-    let target = match Local.from_local_datetime(&target_date.and_hms_opt(target_hour, 0, 0).unwrap()) {
-        LocalResult::Single(target) => target,
-        LocalResult::Ambiguous(earliest, _) => earliest,
-        LocalResult::None => now + chrono::Duration::hours(interval_hours as i64),
-    };
+    let target =
+        match Local.from_local_datetime(&target_date.and_hms_opt(target_hour, 0, 0).unwrap()) {
+            LocalResult::Single(target) => target,
+            LocalResult::Ambiguous(earliest, _) => earliest,
+            LocalResult::None => now + chrono::Duration::hours(interval_hours as i64),
+        };
 
     let target = if target <= now {
         now + chrono::Duration::hours(interval_hours as i64)

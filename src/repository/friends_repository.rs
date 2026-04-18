@@ -77,11 +77,9 @@ pub async fn create_friend_request(
 
     match request {
         Ok(r) => Ok(r),
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
-            Err(AppError::Conflict(
-                "a pending friend request already exists".to_string(),
-            ))
-        }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => Err(
+            AppError::Conflict("a pending friend request already exists".to_string()),
+        ),
         Err(err) => Err(AppError::Database(err)),
     }
 }
@@ -283,4 +281,3 @@ pub async fn list_friends(pool: &PgPool, actor_user_id: i64) -> Result<Vec<Frien
 
     Ok(friends)
 }
-

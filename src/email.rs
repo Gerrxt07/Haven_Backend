@@ -21,10 +21,7 @@ impl EmailClient {
             AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
         };
 
-        let mailer = builder
-            .port(config.smtp_port)
-            .credentials(creds)
-            .build();
+        let mailer = builder.port(config.smtp_port).credentials(creds).build();
 
         let from = Mailbox::new(
             Some(config.smtp_from_name.clone()),
@@ -76,7 +73,8 @@ impl EmailClient {
 }
 
 fn build_verification_email_html(code: &str, ttl_minutes: i64) -> String {
-    let logo_url = "https://raw.githubusercontent.com/Gerrxt07/Haven/refs/heads/master/public/logo.png";
+    let logo_url =
+        "https://raw.githubusercontent.com/Gerrxt07/Haven/refs/heads/master/public/logo.png";
     let banner_url = "https://raw.githubusercontent.com/Gerrxt07/Haven/refs/heads/master/public/form_background.png";
 
     format!(

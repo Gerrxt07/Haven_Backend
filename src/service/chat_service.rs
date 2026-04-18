@@ -71,8 +71,10 @@ impl ChatService {
         )
         .await?;
 
-        let server_membership_key =
-            format!("cache:chat:member:server:{}:user:{}", server.id, actor_user_id);
+        let server_membership_key = format!(
+            "cache:chat:member:server:{}:user:{}",
+            server.id, actor_user_id
+        );
         cache_repository::set_json(
             &self.state.redis_pool,
             &server_membership_key,
@@ -165,11 +167,8 @@ impl ChatService {
         let before_token = before.unwrap_or(0);
         let cache_key = format!("cache:chat:channels:{server_id}:{before_token}:{limit}");
 
-        if let Some(cached) = cache_repository::get_json::<Vec<Channel>>(
-            &self.state.redis_pool,
-            &cache_key,
-        )
-        .await?
+        if let Some(cached) =
+            cache_repository::get_json::<Vec<Channel>>(&self.state.redis_pool, &cache_key).await?
         {
             return Ok(cached);
         }
@@ -407,11 +406,8 @@ impl ChatService {
         let before_token = before.unwrap_or(0);
         let cache_key = format!("cache:chat:messages:{channel_id}:{before_token}:{limit}");
 
-        if let Some(cached) = cache_repository::get_json::<Vec<Message>>(
-            &self.state.redis_pool,
-            &cache_key,
-        )
-        .await?
+        if let Some(cached) =
+            cache_repository::get_json::<Vec<Message>>(&self.state.redis_pool, &cache_key).await?
         {
             return Ok(cached);
         }
@@ -473,8 +469,8 @@ impl ChatService {
         actor_user_id: i64,
     ) -> Result<bool, AppError> {
         let cache_key = format!("cache:chat:member:server:{server_id}:user:{actor_user_id}");
-        if let Some(cached) = cache_repository::get_json::<bool>(&self.state.redis_pool, &cache_key)
-            .await?
+        if let Some(cached) =
+            cache_repository::get_json::<bool>(&self.state.redis_pool, &cache_key).await?
         {
             return Ok(cached);
         }
@@ -500,8 +496,8 @@ impl ChatService {
         actor_user_id: i64,
     ) -> Result<bool, AppError> {
         let cache_key = format!("cache:chat:member:channel:{channel_id}:user:{actor_user_id}");
-        if let Some(cached) = cache_repository::get_json::<bool>(&self.state.redis_pool, &cache_key)
-            .await?
+        if let Some(cached) =
+            cache_repository::get_json::<bool>(&self.state.redis_pool, &cache_key).await?
         {
             return Ok(cached);
         }

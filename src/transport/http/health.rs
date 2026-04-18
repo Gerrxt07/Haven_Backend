@@ -7,7 +7,10 @@ pub fn router() -> Router<AppState> {
 
 async fn health(
     State(state): State<AppState>,
-) -> (StatusCode, Json<crate::service::health_service::HealthResponse>) {
+) -> (
+    StatusCode,
+    Json<crate::service::health_service::HealthResponse>,
+) {
     let service = ServiceFactory::new(state).health();
     let (status, response) = service.health().await;
     (status, Json(response))

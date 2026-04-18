@@ -82,8 +82,7 @@ impl Config {
         let smtp_username = env::var("SMTP_USERNAME")?;
         let smtp_password = env::var("SMTP_PASSWORD")?;
         let smtp_from_email = env::var("SMTP_FROM_EMAIL")?;
-        let smtp_from_name =
-            env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "Haven".to_string());
+        let smtp_from_name = env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "Haven".to_string());
         let smtp_use_starttls = env::var("SMTP_USE_STARTTLS")
             .unwrap_or_else(|_| "true".to_string())
             .parse::<bool>()?;

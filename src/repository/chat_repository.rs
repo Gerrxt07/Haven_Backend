@@ -77,9 +77,9 @@ pub async fn create_server_with_owner_member(
         Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
             Err(AppError::Conflict("server slug already exists".to_string()))
         }
-        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23503") => {
-            Err(AppError::BadRequest("owner user does not exist".to_string()))
-        }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23503") => Err(
+            AppError::BadRequest("owner user does not exist".to_string()),
+        ),
         Err(err) => Err(AppError::Database(err)),
     }
 }

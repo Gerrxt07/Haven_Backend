@@ -23,8 +23,14 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login/verify", post(login_verify))
         .route("/auth/refresh", post(refresh))
         .route("/auth/me", get(me))
-        .route("/auth/email/verification/request", post(request_email_verification))
-        .route("/auth/email/verification/confirm", post(confirm_email_verification))
+        .route(
+            "/auth/email/verification/request",
+            post(request_email_verification),
+        )
+        .route(
+            "/auth/email/verification/confirm",
+            post(confirm_email_verification),
+        )
         .route("/auth/2fa/setup", post(setup_two_factor))
         .route("/auth/2fa/confirm", post(confirm_two_factor))
         .route("/auth/2fa/disable", post(disable_two_factor))
@@ -63,14 +69,14 @@ async fn login_verify(
     Json(payload): Json<LoginVerifyRequest>,
 ) -> Result<Json<crate::domain::auth::LoginVerifyResponse>, AppError> {
     let service = ServiceFactory::new(state).auth();
-    
+
     // Extract challenge_id from header (set by client)
     let challenge_id = headers
         .get("x-srp-challenge-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
         .ok_or_else(|| AppError::BadRequest("Missing x-srp-challenge-id header".to_string()))?;
-    
+
     let response = service.login_verify(challenge_id, payload).await?;
     Ok(Json(response))
 }
@@ -99,7 +105,9 @@ async fn request_email_verification(
     Json(payload): Json<EmailVerificationRequest>,
 ) -> Result<Json<StatusResponse>, AppError> {
     let service = ServiceFactory::new(state).auth();
-    let status = service.request_email_verification(&headers, payload).await?;
+    let status = service
+        .request_email_verification(&headers, payload)
+        .await?;
     Ok(Json(status))
 }
 

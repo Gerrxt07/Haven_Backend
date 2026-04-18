@@ -63,7 +63,8 @@ impl FriendsService {
         )
         .await?;
 
-        self.invalidate_pending_cache_for(actor_user_id, target.0).await?;
+        self.invalidate_pending_cache_for(actor_user_id, target.0)
+            .await?;
 
         let event = RealtimeEvent::new(
             "friend_request_received",
@@ -87,8 +88,8 @@ impl FriendsService {
             return Ok(cached);
         }
 
-        let requests = friends_repository::list_incoming_pending(&self.state.pg_pool, actor_user_id)
-            .await?;
+        let requests =
+            friends_repository::list_incoming_pending(&self.state.pg_pool, actor_user_id).await?;
 
         let index_key = format!("cache:friends:index:{actor_user_id}");
         cache_repository::set_json_indexed(
@@ -112,8 +113,8 @@ impl FriendsService {
             return Ok(cached);
         }
 
-        let requests = friends_repository::list_outgoing_pending(&self.state.pg_pool, actor_user_id)
-            .await?;
+        let requests =
+            friends_repository::list_outgoing_pending(&self.state.pg_pool, actor_user_id).await?;
 
         let index_key = format!("cache:friends:index:{actor_user_id}");
         cache_repository::set_json_indexed(

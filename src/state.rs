@@ -1,4 +1,7 @@
-use crate::{auth::TokenManager, crypto::CryptoManager, email::EmailClient, security::SimpleRateLimiter, service::srp_service::SrpService};
+use crate::{
+    auth::TokenManager, crypto::CryptoManager, email::EmailClient, security::SimpleRateLimiter,
+    service::srp_service::SrpService,
+};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
