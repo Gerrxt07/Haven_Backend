@@ -108,3 +108,58 @@ pub struct PaginationQuery {
     pub before: Option<i64>,
     pub limit: Option<i64>,
 }
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct CreateDmThreadRequest {
+    pub peer_user_id: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
+pub struct DmThread {
+    pub id: i64,
+    pub user_a_id: i64,
+    pub user_b_id: i64,
+    pub created_by_user_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
+pub struct DmThreadSummary {
+    pub id: i64,
+    pub peer_user_id: i64,
+    pub peer_username: String,
+    pub peer_display_name: String,
+    pub peer_avatar_url: Option<String>,
+    pub last_message_preview: Option<String>,
+    pub last_message_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct CreateDmMessageRequest {
+    pub content: Option<String>,
+    pub ciphertext: Option<String>,
+    pub nonce: Option<String>,
+    pub aad: Option<String>,
+    pub algorithm: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
+pub struct DmMessage {
+    pub id: i64,
+    pub thread_id: i64,
+    pub author_user_id: i64,
+    pub author_avatar_url: Option<String>,
+    pub content: String,
+    pub is_encrypted: bool,
+    pub ciphertext: Option<String>,
+    pub nonce: Option<String>,
+    pub aad: Option<String>,
+    pub algorithm: Option<String>,
+    pub edited_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}

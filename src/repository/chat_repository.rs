@@ -1,5 +1,5 @@
 use crate::{
-    domain::chat::{Channel, Message, Server},
+    domain::chat::{Channel, DmMessage, DmThread, DmThreadSummary, Message, Server},
     error::AppError,
 };
 use sqlx::PgPool;
@@ -31,6 +31,25 @@ pub struct NewChannel {
 pub struct NewMessage {
     pub id: i64,
     pub channel_id: i64,
+    pub author_user_id: i64,
+    pub content: String,
+    pub is_encrypted: bool,
+    pub ciphertext: Option<String>,
+    pub nonce: Option<String>,
+    pub aad: Option<String>,
+    pub algorithm: Option<String>,
+}
+
+pub struct NewDmThread {
+    pub id: i64,
+    pub user_a_id: i64,
+    pub user_b_id: i64,
+    pub created_by_user_id: i64,
+}
+
+pub struct NewDmMessage {
+    pub id: i64,
+    pub thread_id: i64,
     pub author_user_id: i64,
     pub content: String,
     pub is_encrypted: bool,
@@ -231,6 +250,236 @@ pub async fn list_messages(
         "#,
     )
     .bind(channel_id)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(messages)
+}
+
+pub async fn create_or_get_dm_thread(
+    pool: &PgPool,
+    input: NewDmThread,
+) -> Result<DmThread, AppError> {
+    let thread = sqlx::query_as::<_, DmThread>(
+        r#"
+        INSERT INTO dm_threads (id, user_a_id, user_b_id, created_by_user_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (user_a_id, user_b_id)
+        DO UPDATE SET updated_at = dm_threads.updated_at
+        RETURNING id, user_a_id, user_b_id, created_by_user_id, created_at, updated_at
+        "#,
+    )
+    .bind(input.id)
+    .bind(input.user_a_id)
+    .bind(input.user_b_id)
+    .bind(input.created_by_user_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(thread)
+}
+
+pub async fn is_dm_participant(
+    pool: &PgPool,
+    thread_id: i64,
+    user_id: i64,
+) -> Result<bool, AppError> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT 1
+        FROM dm_threads
+        WHERE id = $1
+          AND (user_a_id = $2 OR user_b_id = $2)
+        "#,
+    )
+    .bind(thread_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    .is_some();
+
+    Ok(exists)
+}
+
+pub async fn list_dm_threads(
+    pool: &PgPool,
+    actor_user_id: i64,
+    before: Option<i64>,
+    limit: i64,
+) -> Result<Vec<DmThreadSummary>, AppError> {
+    let rows = sqlx::query_as::<_, DmThreadSummary>(
+        r#"
+        SELECT
+            t.id,
+            CASE WHEN t.user_a_id = $1 THEN t.user_b_id ELSE t.user_a_id END AS peer_user_id,
+            u.username AS peer_username,
+            u.display_name AS peer_display_name,
+            u.avatar_url AS peer_avatar_url,
+            lm.last_message_preview,
+            lm.last_message_at,
+            t.created_at,
+            t.updated_at
+        FROM dm_threads t
+        JOIN users u ON u.id = CASE WHEN t.user_a_id = $1 THEN t.user_b_id ELSE t.user_a_id END
+        LEFT JOIN LATERAL (
+            SELECT
+                CASE
+                    WHEN m.is_encrypted THEN '[e2ee]'
+                    ELSE LEFT(m.content, 120)
+                END AS last_message_preview,
+                m.created_at AS last_message_at
+            FROM dm_messages m
+            WHERE m.thread_id = t.id
+              AND m.deleted_at IS NULL
+            ORDER BY m.id DESC
+            LIMIT 1
+        ) lm ON TRUE
+        WHERE (t.user_a_id = $1 OR t.user_b_id = $1)
+          AND ($2::BIGINT IS NULL OR t.id < $2)
+        ORDER BY COALESCE(lm.last_message_at, t.updated_at) DESC, t.id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(actor_user_id)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+pub async fn get_dm_thread_summary(
+    pool: &PgPool,
+    actor_user_id: i64,
+    thread_id: i64,
+) -> Result<Option<DmThreadSummary>, AppError> {
+    let row = sqlx::query_as::<_, DmThreadSummary>(
+        r#"
+        SELECT
+            t.id,
+            CASE WHEN t.user_a_id = $1 THEN t.user_b_id ELSE t.user_a_id END AS peer_user_id,
+            u.username AS peer_username,
+            u.display_name AS peer_display_name,
+            u.avatar_url AS peer_avatar_url,
+            lm.last_message_preview,
+            lm.last_message_at,
+            t.created_at,
+            t.updated_at
+        FROM dm_threads t
+        JOIN users u ON u.id = CASE WHEN t.user_a_id = $1 THEN t.user_b_id ELSE t.user_a_id END
+        LEFT JOIN LATERAL (
+            SELECT
+                CASE
+                    WHEN m.is_encrypted THEN '[e2ee]'
+                    ELSE LEFT(m.content, 120)
+                END AS last_message_preview,
+                m.created_at AS last_message_at
+            FROM dm_messages m
+            WHERE m.thread_id = t.id
+              AND m.deleted_at IS NULL
+            ORDER BY m.id DESC
+            LIMIT 1
+        ) lm ON TRUE
+        WHERE t.id = $2
+          AND (t.user_a_id = $1 OR t.user_b_id = $1)
+        "#,
+    )
+    .bind(actor_user_id)
+    .bind(thread_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row)
+}
+
+pub async fn create_dm_message(pool: &PgPool, input: NewDmMessage) -> Result<DmMessage, AppError> {
+    let message = sqlx::query_as::<_, DmMessage>(
+        r#"
+        WITH inserted AS (
+            INSERT INTO dm_messages (
+                id, thread_id, author_user_id, content,
+                is_encrypted, ciphertext, nonce, aad, algorithm
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING
+                id, thread_id, author_user_id, content,
+                is_encrypted, ciphertext, nonce, aad, algorithm,
+                edited_at, deleted_at, created_at, updated_at
+        ),
+        bumped AS (
+            UPDATE dm_threads
+            SET updated_at = NOW()
+            WHERE id = $2
+        )
+        SELECT
+            i.id,
+            i.thread_id,
+            i.author_user_id,
+            (SELECT avatar_url FROM users WHERE id = i.author_user_id) AS author_avatar_url,
+            i.content,
+            i.is_encrypted,
+            i.ciphertext,
+            i.nonce,
+            i.aad,
+            i.algorithm,
+            i.edited_at,
+            i.deleted_at,
+            i.created_at,
+            i.updated_at
+        FROM inserted i
+        "#,
+    )
+    .bind(input.id)
+    .bind(input.thread_id)
+    .bind(input.author_user_id)
+    .bind(input.content)
+    .bind(input.is_encrypted)
+    .bind(input.ciphertext)
+    .bind(input.nonce)
+    .bind(input.aad)
+    .bind(input.algorithm)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(message)
+}
+
+pub async fn list_dm_messages(
+    pool: &PgPool,
+    thread_id: i64,
+    before: Option<i64>,
+    limit: i64,
+) -> Result<Vec<DmMessage>, AppError> {
+    let messages = sqlx::query_as::<_, DmMessage>(
+        r#"
+        SELECT
+            m.id,
+            m.thread_id,
+            m.author_user_id,
+            u.avatar_url AS author_avatar_url,
+            m.content,
+            m.is_encrypted,
+            m.ciphertext,
+            m.nonce,
+            m.aad,
+            m.algorithm,
+            m.edited_at,
+            m.deleted_at,
+            m.created_at,
+            m.updated_at
+        FROM dm_messages m
+        LEFT JOIN users u ON u.id = m.author_user_id
+        WHERE m.thread_id = $1
+          AND m.deleted_at IS NULL
+          AND ($2::BIGINT IS NULL OR m.id < $2)
+        ORDER BY m.id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(thread_id)
     .bind(before)
     .bind(limit)
     .fetch_all(pool)

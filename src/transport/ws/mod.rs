@@ -60,10 +60,7 @@ fn bind_actor_user_id(bound: &mut Option<i64>, candidate: Option<i64>) -> Result
     match (*bound, candidate) {
         (Some(existing), Some(next)) if next > 0 && next != existing => Err(()),
         (Some(existing), _) => Ok(Some(existing)),
-        (None, Some(next)) if next > 0 => {
-            *bound = Some(next);
-            Ok(Some(next))
-        }
+        (None, Some(_)) => Err(()),
         (None, _) => Ok(None),
     }
 }
@@ -102,6 +99,19 @@ fn should_send_event(event: &RealtimeEvent, connection: &WsConnectionState) -> b
 }
 
 async fn user_can_join_channel(state: &AppState, user_id: i64, channel: &str) -> bool {
+    if let Some(dm_thread) = channel.strip_prefix("dm:") {
+        let Ok(thread_id) = dm_thread.parse::<i64>() else {
+            return false;
+        };
+        if thread_id <= 0 {
+            return false;
+        }
+
+        return chat_repository::is_dm_participant(&state.pg_pool, thread_id, user_id)
+            .await
+            .unwrap_or(false);
+    }
+
     let Ok(channel_id) = channel.parse::<i64>() else {
         return true;
     };
@@ -173,17 +183,16 @@ async fn handle_socket(state: AppState, socket: WebSocket, actor_user_id: Option
                         ClientRealtimeMessage::Join { channel, user_id } => {
                             let resolved_user_id = {
                                 let mut state = recv_connection_state.write().await;
-                                let resolved =
-                                    bind_actor_user_id(&mut state.actor_user_id, user_id);
-                                if resolved.is_err() {
-                                    None
-                                } else {
-                                    state.subscribed_channels.insert(channel.clone());
-                                    resolved.ok().flatten()
+                                match bind_actor_user_id(&mut state.actor_user_id, user_id) {
+                                    Ok(Some(actor_user_id)) => {
+                                        state.subscribed_channels.insert(channel.clone());
+                                        Some(actor_user_id)
+                                    }
+                                    _ => None,
                                 }
                             };
 
-                            if resolved_user_id.is_none() && user_id.is_some() {
+                            if resolved_user_id.is_none() {
                                 continue;
                             }
 
@@ -217,7 +226,8 @@ async fn handle_socket(state: AppState, socket: WebSocket, actor_user_id: Option
                                     (true, None)
                                 } else {
                                     match bind_actor_user_id(&mut state.actor_user_id, user_id) {
-                                        Ok(resolved) => (false, resolved),
+                                        Ok(Some(resolved)) => (false, Some(resolved)),
+                                        Ok(None) => (true, None),
                                         Err(()) => (true, None),
                                     }
                                 }

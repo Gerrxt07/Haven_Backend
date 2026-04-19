@@ -2,13 +2,14 @@ use crate::{
     auth::generate_id,
     domain::{
         chat::{
-            Channel, CreateChannelRequest, CreateMessageRequest, CreateServerRequest, Message,
+            Channel, CreateChannelRequest, CreateDmMessageRequest, CreateDmThreadRequest,
+            CreateMessageRequest, CreateServerRequest, DmMessage, DmThreadSummary, Message,
             PaginationQuery, Server,
         },
         realtime::RealtimeEvent,
     },
     error::AppError,
-    repository::{cache_repository, chat_repository, e2ee_repository},
+    repository::{cache_repository, chat_repository, e2ee_repository, friends_repository},
     service::realtime_service::RealtimeService,
     state::AppState,
 };
@@ -18,6 +19,8 @@ use validator::Validate;
 const MEMBERSHIP_CACHE_TTL_SECONDS: u64 = 120;
 const CHANNEL_LIST_CACHE_TTL_SECONDS: u64 = 300;
 const MESSAGE_LIST_CACHE_TTL_SECONDS: u64 = 120;
+const DM_THREAD_LIST_CACHE_TTL_SECONDS: u64 = 120;
+const DM_MESSAGE_LIST_CACHE_TTL_SECONDS: u64 = 120;
 
 #[derive(Clone)]
 pub struct ChatService {
@@ -463,6 +466,302 @@ impl ChatService {
             .await
     }
 
+    pub async fn create_dm_thread(
+        &self,
+        actor_user_id: i64,
+        payload: CreateDmThreadRequest,
+    ) -> Result<DmThreadSummary, AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        if actor_user_id <= 0 {
+            return Err(AppError::Validation(
+                "authenticated user id must be > 0".to_string(),
+            ));
+        }
+        if payload.peer_user_id <= 0 {
+            return Err(AppError::Validation("peer_user_id must be > 0".to_string()));
+        }
+        if payload.peer_user_id == actor_user_id {
+            return Err(AppError::Validation(
+                "cannot create a direct message thread with yourself".to_string(),
+            ));
+        }
+
+        let are_friends = friends_repository::are_friends(
+            &self.state.pg_pool,
+            actor_user_id,
+            payload.peer_user_id,
+        )
+        .await?;
+        if !are_friends {
+            return Err(AppError::Forbidden);
+        }
+
+        let (user_a_id, user_b_id) = canonical_dm_pair(actor_user_id, payload.peer_user_id);
+        let thread = chat_repository::create_or_get_dm_thread(
+            &self.state.pg_pool,
+            chat_repository::NewDmThread {
+                id: generate_id(),
+                user_a_id,
+                user_b_id,
+                created_by_user_id: actor_user_id,
+            },
+        )
+        .await?;
+
+        self.invalidate_dm_threads_cache_for(actor_user_id, payload.peer_user_id)
+            .await?;
+
+        let summary =
+            chat_repository::get_dm_thread_summary(&self.state.pg_pool, actor_user_id, thread.id)
+                .await?
+                .ok_or(AppError::NotFound)?;
+
+        Ok(summary)
+    }
+
+    pub async fn list_dm_threads(
+        &self,
+        actor_user_id: i64,
+        query: PaginationQuery,
+    ) -> Result<Vec<DmThreadSummary>, AppError> {
+        if actor_user_id <= 0 {
+            return Err(AppError::Validation(
+                "authenticated user id must be > 0".to_string(),
+            ));
+        }
+
+        if let Some(before) = query.before {
+            if before <= 0 {
+                return Err(AppError::Validation(
+                    "before cursor must be > 0".to_string(),
+                ));
+            }
+        }
+
+        let limit = query.limit.unwrap_or(30).clamp(1, 100);
+        let before = query.before;
+        let before_token = before.unwrap_or(0);
+        let cache_key = format!("cache:dm:threads:{actor_user_id}:{before_token}:{limit}");
+
+        if let Some(cached) =
+            cache_repository::get_json::<Vec<DmThreadSummary>>(&self.state.redis_pool, &cache_key)
+                .await?
+        {
+            return Ok(cached);
+        }
+
+        let threads =
+            chat_repository::list_dm_threads(&self.state.pg_pool, actor_user_id, before, limit)
+                .await?;
+
+        let index_key = format!("cache:dm:threads:index:{actor_user_id}");
+        cache_repository::set_json_indexed(
+            &self.state.redis_pool,
+            &index_key,
+            &cache_key,
+            &threads,
+            DM_THREAD_LIST_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(threads)
+    }
+
+    pub async fn create_dm_message(
+        &self,
+        actor_user_id: i64,
+        thread_id: i64,
+        payload: CreateDmMessageRequest,
+    ) -> Result<DmMessage, AppError> {
+        payload
+            .validate()
+            .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        if actor_user_id <= 0 {
+            return Err(AppError::Validation(
+                "authenticated user id must be > 0".to_string(),
+            ));
+        }
+        if thread_id <= 0 {
+            return Err(AppError::Validation("thread_id must be > 0".to_string()));
+        }
+
+        let is_participant = self
+            .is_dm_participant_cached(thread_id, actor_user_id)
+            .await?;
+        if !is_participant {
+            return Err(AppError::Forbidden);
+        }
+
+        let is_encrypted = payload.ciphertext.is_some() || payload.nonce.is_some();
+        let (content_to_store, ciphertext, nonce, aad, algorithm) = if is_encrypted {
+            let ciphertext = payload
+                .ciphertext
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .ok_or(AppError::Validation(
+                    "ciphertext is required for e2ee message".to_string(),
+                ))?;
+
+            let nonce = payload
+                .nonce
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .ok_or(AppError::Validation(
+                    "nonce is required for e2ee message".to_string(),
+                ))?;
+
+            (
+                "[e2ee]".to_string(),
+                Some(ciphertext),
+                Some(nonce),
+                payload.aad,
+                Some(
+                    payload
+                        .algorithm
+                        .unwrap_or_else(|| "xchacha20poly1305".to_string()),
+                ),
+            )
+        } else {
+            let content = payload
+                .content
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .ok_or(AppError::Validation(
+                    "content must not be empty".to_string(),
+                ))?;
+
+            if content
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t')
+            {
+                return Err(AppError::Validation(
+                    "content contains invalid control characters".to_string(),
+                ));
+            }
+
+            (content, None, None, None, None)
+        };
+
+        let message = chat_repository::create_dm_message(
+            &self.state.pg_pool,
+            chat_repository::NewDmMessage {
+                id: generate_id(),
+                thread_id,
+                author_user_id: actor_user_id,
+                content: content_to_store,
+                is_encrypted,
+                ciphertext,
+                nonce,
+                aad,
+                algorithm,
+            },
+        )
+        .await?;
+
+        let message_index_key = format!("cache:dm:messages:index:{thread_id}");
+        cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &message_index_key)
+            .await?;
+
+        let thread =
+            chat_repository::get_dm_thread_summary(&self.state.pg_pool, actor_user_id, thread_id)
+                .await?
+                .ok_or(AppError::NotFound)?;
+        self.invalidate_dm_threads_cache_for(actor_user_id, thread.peer_user_id)
+            .await?;
+
+        let event = RealtimeEvent::new(
+            "direct_message",
+            Some(actor_user_id),
+            Some(format!("dm:{thread_id}")),
+            serde_json::json!({
+                "id": message.id,
+                "thread_id": message.thread_id,
+                "author_user_id": message.author_user_id,
+                "author_avatar_url": message.author_avatar_url,
+                "content": message.content,
+                "is_encrypted": message.is_encrypted,
+                "ciphertext": message.ciphertext,
+                "nonce": message.nonce,
+                "aad": message.aad,
+                "algorithm": message.algorithm,
+                "edited_at": message.edited_at,
+                "deleted_at": message.deleted_at,
+                "created_at": message.created_at,
+                "updated_at": message.updated_at,
+            }),
+        );
+
+        let realtime_service = RealtimeService::new(self.state.clone());
+        let _ = realtime_service.publish_with_fanout(event).await;
+
+        Ok(message)
+    }
+
+    pub async fn list_dm_messages(
+        &self,
+        actor_user_id: i64,
+        thread_id: i64,
+        query: PaginationQuery,
+    ) -> Result<Vec<DmMessage>, AppError> {
+        if actor_user_id <= 0 {
+            return Err(AppError::Validation(
+                "authenticated user id must be > 0".to_string(),
+            ));
+        }
+        if thread_id <= 0 {
+            return Err(AppError::Validation("thread_id must be > 0".to_string()));
+        }
+
+        let is_participant = self
+            .is_dm_participant_cached(thread_id, actor_user_id)
+            .await?;
+        if !is_participant {
+            return Err(AppError::Forbidden);
+        }
+
+        if let Some(before) = query.before {
+            if before <= 0 {
+                return Err(AppError::Validation(
+                    "before cursor must be > 0".to_string(),
+                ));
+            }
+        }
+
+        let limit = query.limit.unwrap_or(50).clamp(1, 100);
+        let before = query.before;
+        let before_token = before.unwrap_or(0);
+        let cache_key = format!("cache:dm:messages:{thread_id}:{before_token}:{limit}");
+
+        if let Some(cached) =
+            cache_repository::get_json::<Vec<DmMessage>>(&self.state.redis_pool, &cache_key).await?
+        {
+            return Ok(cached);
+        }
+
+        let messages =
+            chat_repository::list_dm_messages(&self.state.pg_pool, thread_id, before, limit)
+                .await?;
+
+        let index_key = format!("cache:dm:messages:index:{thread_id}");
+        cache_repository::set_json_indexed(
+            &self.state.redis_pool,
+            &index_key,
+            &cache_key,
+            &messages,
+            DM_MESSAGE_LIST_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(messages)
+    }
+
     async fn is_server_member_cached(
         &self,
         server_id: i64,
@@ -515,5 +814,54 @@ impl ChatService {
         .await?;
 
         Ok(is_member)
+    }
+
+    async fn is_dm_participant_cached(
+        &self,
+        thread_id: i64,
+        actor_user_id: i64,
+    ) -> Result<bool, AppError> {
+        let cache_key = format!("cache:dm:member:thread:{thread_id}:user:{actor_user_id}");
+        if let Some(cached) =
+            cache_repository::get_json::<bool>(&self.state.redis_pool, &cache_key).await?
+        {
+            return Ok(cached);
+        }
+
+        let is_participant =
+            chat_repository::is_dm_participant(&self.state.pg_pool, thread_id, actor_user_id)
+                .await?;
+
+        cache_repository::set_json(
+            &self.state.redis_pool,
+            &cache_key,
+            &is_participant,
+            MEMBERSHIP_CACHE_TTL_SECONDS,
+        )
+        .await?;
+
+        Ok(is_participant)
+    }
+
+    async fn invalidate_dm_threads_cache_for(
+        &self,
+        user_a: i64,
+        user_b: i64,
+    ) -> Result<(), AppError> {
+        let index_a = format!("cache:dm:threads:index:{user_a}");
+        let index_b = format!("cache:dm:threads:index:{user_b}");
+        cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_a).await?;
+        if user_a != user_b {
+            cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_b).await?;
+        }
+        Ok(())
+    }
+}
+
+fn canonical_dm_pair(user_a: i64, user_b: i64) -> (i64, i64) {
+    if user_a < user_b {
+        (user_a, user_b)
+    } else {
+        (user_b, user_a)
     }
 }

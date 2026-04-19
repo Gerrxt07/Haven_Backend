@@ -1,7 +1,8 @@
 use crate::{
     domain::chat::{
-        CreateChannelDirectRequest, CreateChannelRequest, CreateMessageDirectRequest,
-        CreateMessageRequest, CreateServerRequest, PaginationQuery,
+        CreateChannelDirectRequest, CreateChannelRequest, CreateDmMessageRequest,
+        CreateDmThreadRequest, CreateMessageDirectRequest, CreateMessageRequest,
+        CreateServerRequest, PaginationQuery,
     },
     error::AppError,
     service::ServiceFactory,
@@ -20,6 +21,11 @@ pub fn router() -> Router<AppState> {
         .route("/servers", post(create_server))
         .route("/channels", post(create_channel_direct))
         .route("/messages", post(create_message_direct))
+        .route("/dm/threads", post(create_dm_thread).get(list_dm_threads))
+        .route(
+            "/dm/threads/{thread_id}/messages",
+            post(create_dm_message).get(list_dm_messages),
+        )
         .route(
             "/servers/{server_id}/channels",
             post(create_channel).get(list_channels),
@@ -153,4 +159,106 @@ async fn create_message_direct(
         .create_message_direct(actor.id, payload)
         .await?;
     Ok(Json(message))
+}
+
+async fn create_dm_thread(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<CreateDmThreadRequest>,
+) -> Result<Json<crate::domain::chat::DmThreadSummary>, AppError> {
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let thread = factory.chat().create_dm_thread(actor.id, payload).await?;
+    Ok(Json(thread))
+}
+
+async fn list_dm_threads(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Query(raw): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<crate::domain::chat::DmThreadSummary>>, AppError> {
+    for key in raw.keys() {
+        if key != "before" && key != "limit" {
+            return Err(AppError::BadRequest(
+                "only cursor pagination is supported: use before and limit".to_string(),
+            ));
+        }
+    }
+
+    let before = match raw.get("before") {
+        Some(v) => Some(
+            v.parse::<i64>()
+                .map_err(|_| AppError::Validation("before must be an integer".to_string()))?,
+        ),
+        None => None,
+    };
+
+    let limit = match raw.get("limit") {
+        Some(v) => Some(
+            v.parse::<i64>()
+                .map_err(|_| AppError::Validation("limit must be an integer".to_string()))?,
+        ),
+        None => None,
+    };
+
+    let query = PaginationQuery { before, limit };
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let threads = factory.chat().list_dm_threads(actor.id, query).await?;
+    Ok(Json(threads))
+}
+
+async fn create_dm_message(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(thread_id): Path<i64>,
+    Json(payload): Json<CreateDmMessageRequest>,
+) -> Result<Json<crate::domain::chat::DmMessage>, AppError> {
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let message = factory
+        .chat()
+        .create_dm_message(actor.id, thread_id, payload)
+        .await?;
+    Ok(Json(message))
+}
+
+async fn list_dm_messages(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(thread_id): Path<i64>,
+    Query(raw): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<crate::domain::chat::DmMessage>>, AppError> {
+    for key in raw.keys() {
+        if key != "before" && key != "limit" {
+            return Err(AppError::BadRequest(
+                "only cursor pagination is supported: use before and limit".to_string(),
+            ));
+        }
+    }
+
+    let before = match raw.get("before") {
+        Some(v) => Some(
+            v.parse::<i64>()
+                .map_err(|_| AppError::Validation("before must be an integer".to_string()))?,
+        ),
+        None => None,
+    };
+
+    let limit = match raw.get("limit") {
+        Some(v) => Some(
+            v.parse::<i64>()
+                .map_err(|_| AppError::Validation("limit must be an integer".to_string()))?,
+        ),
+        None => None,
+    };
+
+    let query = PaginationQuery { before, limit };
+    let factory = ServiceFactory::new(state);
+    let actor = factory.auth().authenticate_request(&headers).await?;
+    let messages = factory
+        .chat()
+        .list_dm_messages(actor.id, thread_id, query)
+        .await?;
+    Ok(Json(messages))
 }
