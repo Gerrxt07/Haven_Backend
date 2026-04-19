@@ -781,14 +781,26 @@ impl AuthService {
         self.authenticate_from_headers(headers).await
     }
 
-    async fn authenticate_from_headers(&self, headers: &HeaderMap) -> Result<AuthUser, AppError> {
-        let bearer = extract_bearer(headers)?;
+    pub async fn authenticate_access_token(&self, bearer: &str) -> Result<AuthUser, AppError> {
         let claims = self
             .state
             .token_manager
-            .parse_and_validate(&bearer, "access")?;
+            .parse_and_validate(bearer, "access")?;
+        self.authenticate_access_claims(claims.user_id, claims.token_version)
+            .await
+    }
 
-        let status_cache_key = format!("cache:auth:status:{}", claims.user_id);
+    async fn authenticate_from_headers(&self, headers: &HeaderMap) -> Result<AuthUser, AppError> {
+        let bearer = extract_bearer(headers)?;
+        self.authenticate_access_token(&bearer).await
+    }
+
+    async fn authenticate_access_claims(
+        &self,
+        user_id: i64,
+        token_version: i32,
+    ) -> Result<AuthUser, AppError> {
+        let status_cache_key = format!("cache:auth:status:{user_id}");
         let status_row = if let Some(cached) = cache_repository::get_json::<CachedAuthStatus>(
             &self.state.redis_pool,
             &status_cache_key,
@@ -797,10 +809,9 @@ impl AuthService {
         {
             (cached.account_status, cached.token_version)
         } else {
-            let row =
-                auth_repository::find_status_and_token_version(&self.state.pg_pool, claims.user_id)
-                    .await?
-                    .ok_or(AppError::Unauthorized)?;
+            let row = auth_repository::find_status_and_token_version(&self.state.pg_pool, user_id)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
 
             let cached = CachedAuthStatus {
                 account_status: row.0.clone(),
@@ -822,11 +833,11 @@ impl AuthService {
             return Err(AppError::Forbidden);
         }
 
-        if status_row.1 != claims.token_version {
+        if status_row.1 != token_version {
             return Err(AppError::Unauthorized);
         }
 
-        Ok(AuthUser { id: claims.user_id })
+        Ok(AuthUser { id: user_id })
     }
 }
 

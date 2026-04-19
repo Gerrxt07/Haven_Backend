@@ -6,8 +6,8 @@ use base64::{
 use dashmap::DashMap;
 use num_bigint::BigUint;
 use rand::RngCore;
-use srp::groups::G_2048;
 use sha2::{Digest, Sha256};
+use srp::groups::G_2048;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -123,8 +123,10 @@ impl SrpService {
             return Err(AppError::Unauthorized);
         }
 
-        let server_public_key_b =
-            compute_server_public_ephemeral(&ephemeral_data.server_private_key, &ephemeral_data.verifier);
+        let server_public_key_b = compute_server_public_ephemeral(
+            &ephemeral_data.server_private_key,
+            &ephemeral_data.verifier,
+        );
         let premaster_secret = compute_premaster_secret(
             &ephemeral_data.server_private_key,
             &ephemeral_data.verifier,
@@ -177,14 +179,14 @@ fn sha256_bytes(parts: &[&[u8]]) -> Vec<u8> {
 }
 
 fn xor_bytes(left: &[u8], right: &[u8]) -> Vec<u8> {
-    left.iter()
-        .zip(right.iter())
-        .map(|(l, r)| l ^ r)
-        .collect()
+    left.iter().zip(right.iter()).map(|(l, r)| l ^ r).collect()
 }
 
 fn compute_js_k() -> BigUint {
-    BigUint::from_bytes_be(&sha256_bytes(&[&G_2048.n.to_bytes_be(), &G_2048.g.to_bytes_be()]))
+    BigUint::from_bytes_be(&sha256_bytes(&[
+        &G_2048.n.to_bytes_be(),
+        &G_2048.g.to_bytes_be(),
+    ]))
 }
 
 fn compute_u(client_public_key_a: &[u8], server_public_key_b: &[u8]) -> BigUint {
@@ -294,10 +296,8 @@ mod tests {
     #[test]
     fn compute_js_client_proof_matches_known_js_vector() {
         let identity = b"gerrxt07@proton.me";
-        let salt = hex::decode(
-            "f20bfa943221cf583e1a979838209b6cd34ae1bb5fbd5b9ed104ab8d8961f065",
-        )
-        .unwrap();
+        let salt = hex::decode("f20bfa943221cf583e1a979838209b6cd34ae1bb5fbd5b9ed104ab8d8961f065")
+            .unwrap();
         let verifier = hex::decode(
             "76f8344885f3f668d973dc8b2d9cfd5e8f526d70d98eab1050c42cb712a9e2af34fe29209fec620ce5afbe35ffa5328550fa71728c6c22e036a0bbb24885c554592b5f2cd41c00565e934968484cb2a4af406cb0425e7ae3347762dd127fe89a734f0fcc907c27e58dc989ea352c8484b84ac8a629f3b4eeadd76d26a003d57e13834e2fc12ab88ce7d64623a2f8451e4ecfbba4697e7d77c0e22dc10a7691b8652e0dc2eb4b3b205994328239a347d95b46e7e6a66cc8aeda0895bbee4ee9bee542c3655e97ddc7368386395369ad9e61967ffe0c6c62d9425b826b8cdfc64ab3640e8609f982acfc461fb3cf2b60417662a12002cec9db1a72c275e80b57b1",
         )

@@ -63,7 +63,7 @@ impl FriendsService {
         )
         .await?;
 
-        self.invalidate_pending_cache_for(actor_user_id, target.0)
+        self.invalidate_friend_views_cache_for(actor_user_id, target.0)
             .await?;
 
         let event = RealtimeEvent::new(
@@ -183,9 +183,7 @@ impl FriendsService {
         )
         .await?;
 
-        self.invalidate_pending_cache_for(updated.from_user_id, updated.to_user_id)
-            .await?;
-        self.invalidate_friends_cache_for(updated.from_user_id, updated.to_user_id)
+        self.invalidate_friend_views_cache_for(updated.from_user_id, updated.to_user_id)
             .await?;
 
         let event = RealtimeEvent::new(
@@ -227,7 +225,7 @@ impl FriendsService {
         )
         .await?;
 
-        self.invalidate_pending_cache_for(updated.from_user_id, updated.to_user_id)
+        self.invalidate_friend_views_cache_for(updated.from_user_id, updated.to_user_id)
             .await?;
 
         let event = RealtimeEvent::new(
@@ -243,17 +241,11 @@ impl FriendsService {
         Ok(updated)
     }
 
-    async fn invalidate_pending_cache_for(&self, user_a: i64, user_b: i64) -> Result<(), AppError> {
-        let index_a = format!("cache:friends:index:{user_a}");
-        let index_b = format!("cache:friends:index:{user_b}");
-        cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_a).await?;
-        if user_a != user_b {
-            cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_b).await?;
-        }
-        Ok(())
-    }
-
-    async fn invalidate_friends_cache_for(&self, user_a: i64, user_b: i64) -> Result<(), AppError> {
+    async fn invalidate_friend_views_cache_for(
+        &self,
+        user_a: i64,
+        user_b: i64,
+    ) -> Result<(), AppError> {
         let index_a = format!("cache:friends:index:{user_a}");
         let index_b = format!("cache:friends:index:{user_b}");
         cache_repository::invalidate_indexed_keys(&self.state.redis_pool, &index_a).await?;

@@ -2,6 +2,7 @@ use crate::{
     domain::realtime::RealtimeEvent, error::AppError, repository::realtime_repository,
     state::AppState,
 };
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct RealtimeService {
@@ -52,8 +53,34 @@ impl RealtimeService {
         let tx = self.state.realtime_tx.clone();
 
         tokio::spawn(async move {
-            if let Err(err) = realtime_repository::subscribe_events(&dragonfly_url, tx).await {
-                tracing::error!(event = "realtime.fanout.bridge.failed", error = %err);
+            let mut reconnect_attempt: u32 = 0;
+            loop {
+                match realtime_repository::subscribe_events(&dragonfly_url, tx.clone()).await {
+                    Ok(()) => {
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                        tracing::warn!(
+                            event = "realtime.fanout.bridge.ended",
+                            reconnect_attempt,
+                            "realtime fanout bridge ended unexpectedly; reconnecting"
+                        );
+                    }
+                    Err(err) => {
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                        tracing::error!(
+                            event = "realtime.fanout.bridge.failed",
+                            reconnect_attempt,
+                            error = %err
+                        );
+                    }
+                }
+
+                let base_delay_ms = 500_u64.saturating_mul(
+                    2_u64.saturating_pow(reconnect_attempt.saturating_sub(1).min(6)),
+                );
+                let jitter_ms = (u64::from(rand::random::<u16>()) % 250).saturating_add(50);
+                let delay =
+                    Duration::from_millis(base_delay_ms.min(30_000).saturating_add(jitter_ms));
+                tokio::time::sleep(delay).await;
             }
         });
     }

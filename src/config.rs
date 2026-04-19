@@ -14,6 +14,11 @@ pub struct Config {
     pub rate_limit_requests_per_minute: u32,
     pub access_token_ttl_minutes: i64,
     pub refresh_token_ttl_days: i64,
+    pub pg_pool_min_connections: u32,
+    pub pg_pool_max_connections: u32,
+    pub pg_pool_acquire_timeout_seconds: u64,
+    pub pg_pool_idle_timeout_seconds: u64,
+    pub pg_pool_max_lifetime_seconds: u64,
     pub avatar_storage_dir: String,
     pub backend_log_file: String,
     pub smtp_host: String,
@@ -64,6 +69,21 @@ impl Config {
         let refresh_token_ttl_days = env::var("REFRESH_TOKEN_TTL_DAYS")
             .unwrap_or_else(|_| "30".to_string())
             .parse::<i64>()?;
+        let pg_pool_min_connections = env::var("PG_POOL_MIN_CONNECTIONS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse::<u32>()?;
+        let pg_pool_max_connections = env::var("PG_POOL_MAX_CONNECTIONS")
+            .unwrap_or_else(|_| "20".to_string())
+            .parse::<u32>()?;
+        let pg_pool_acquire_timeout_seconds = env::var("PG_POOL_ACQUIRE_TIMEOUT_SECONDS")
+            .unwrap_or_else(|_| "8".to_string())
+            .parse::<u64>()?;
+        let pg_pool_idle_timeout_seconds = env::var("PG_POOL_IDLE_TIMEOUT_SECONDS")
+            .unwrap_or_else(|_| "600".to_string())
+            .parse::<u64>()?;
+        let pg_pool_max_lifetime_seconds = env::var("PG_POOL_MAX_LIFETIME_SECONDS")
+            .unwrap_or_else(|_| "1800".to_string())
+            .parse::<u64>()?;
         let avatar_storage_dir = env::var("AVATAR_STORAGE_DIR")
             .ok()
             .map(|s| s.trim().to_string())
@@ -87,6 +107,9 @@ impl Config {
             .unwrap_or_else(|_| "true".to_string())
             .parse::<bool>()?;
 
+        let pg_pool_max_connections = pg_pool_max_connections.max(1);
+        let pg_pool_min_connections = pg_pool_min_connections.min(pg_pool_max_connections);
+
         Ok(Self {
             host,
             port,
@@ -101,6 +124,11 @@ impl Config {
             rate_limit_requests_per_minute,
             access_token_ttl_minutes,
             refresh_token_ttl_days,
+            pg_pool_min_connections,
+            pg_pool_max_connections,
+            pg_pool_acquire_timeout_seconds: pg_pool_acquire_timeout_seconds.max(1),
+            pg_pool_idle_timeout_seconds: pg_pool_idle_timeout_seconds.max(1),
+            pg_pool_max_lifetime_seconds: pg_pool_max_lifetime_seconds.max(1),
             avatar_storage_dir,
             backend_log_file,
             smtp_host,

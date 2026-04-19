@@ -4,7 +4,7 @@ use crate::{
     },
     error::AppError,
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 pub async fn user_exists(pool: &PgPool, user_id: i64) -> Result<bool, AppError> {
     let exists = sqlx::query_scalar::<_, i64>("SELECT 1 FROM users WHERE id = $1")
@@ -44,19 +44,19 @@ pub async fn upsert_key_bundle(
     .execute(&mut *tx)
     .await?;
 
-    for prekey in &req.one_time_prekeys {
-        sqlx::query(
-            r#"
-            INSERT INTO one_time_prekeys (id, user_id, prekey)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (id) DO NOTHING
-            "#,
-        )
-        .bind(prekey.id)
-        .bind(user_id)
-        .bind(&prekey.prekey)
-        .execute(&mut *tx)
-        .await?;
+    if !req.one_time_prekeys.is_empty() {
+        let mut query_builder: QueryBuilder<'_, Postgres> =
+            QueryBuilder::new("INSERT INTO one_time_prekeys (id, user_id, prekey) ");
+
+        query_builder.push_values(req.one_time_prekeys.iter(), |mut builder, prekey| {
+            builder
+                .push_bind(prekey.id)
+                .push_bind(user_id)
+                .push_bind(&prekey.prekey);
+        });
+        query_builder.push(" ON CONFLICT (id) DO NOTHING");
+
+        query_builder.build().execute(&mut *tx).await?;
     }
 
     tx.commit().await?;
@@ -144,27 +144,28 @@ pub async fn insert_message_recipient_keys(
     pool: &PgPool,
     rows: Vec<NewMessageRecipientKey>,
 ) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
-
-    for row in rows {
-        sqlx::query(
-            r#"
-            INSERT INTO message_recipient_keys (
-                id, message_id, recipient_user_id, encrypted_message_key, one_time_prekey_id
-            ) VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (message_id, recipient_user_id) DO UPDATE
-            SET encrypted_message_key = EXCLUDED.encrypted_message_key,
-                one_time_prekey_id = EXCLUDED.one_time_prekey_id
-            "#,
-        )
-        .bind(crate::auth::generate_id())
-        .bind(row.message_id)
-        .bind(row.recipient_user_id)
-        .bind(row.encrypted_message_key)
-        .bind(row.one_time_prekey_id)
-        .execute(&mut *tx)
-        .await?;
+    if rows.is_empty() {
+        return Ok(());
     }
+
+    let mut tx = pool.begin().await?;
+    let mut query_builder: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+        "INSERT INTO message_recipient_keys (id, message_id, recipient_user_id, encrypted_message_key, one_time_prekey_id) ",
+    );
+
+    query_builder.push_values(rows.iter(), |mut builder, row| {
+        builder
+            .push_bind(crate::auth::generate_id())
+            .push_bind(row.message_id)
+            .push_bind(row.recipient_user_id)
+            .push_bind(&row.encrypted_message_key)
+            .push_bind(row.one_time_prekey_id);
+    });
+    query_builder.push(
+        " ON CONFLICT (message_id, recipient_user_id) DO UPDATE SET encrypted_message_key = EXCLUDED.encrypted_message_key, one_time_prekey_id = EXCLUDED.one_time_prekey_id",
+    );
+
+    query_builder.build().execute(&mut *tx).await?;
 
     tx.commit().await?;
     Ok(())

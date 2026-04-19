@@ -131,7 +131,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ensure_database_exists(&config).await?;
 
     let pg_pool = PgPoolOptions::new()
-        .max_connections(20)
+        .min_connections(config.pg_pool_min_connections)
+        .max_connections(config.pg_pool_max_connections)
+        .acquire_timeout(Duration::from_secs(config.pg_pool_acquire_timeout_seconds))
+        .idle_timeout(Some(Duration::from_secs(
+            config.pg_pool_idle_timeout_seconds,
+        )))
+        .max_lifetime(Some(Duration::from_secs(
+            config.pg_pool_max_lifetime_seconds,
+        )))
         .connect(&config.postgres_url)
         .await?;
 

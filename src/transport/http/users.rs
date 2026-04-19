@@ -220,7 +220,10 @@ async fn get_avatar(
     Ok((
         [
             (header::CONTENT_TYPE, HeaderValue::from_static("image/webp")),
-            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+            (
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            ),
         ],
         bytes,
     ))

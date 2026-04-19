@@ -8,29 +8,39 @@ use axum::{
 use dashmap::DashMap;
 use std::{
     collections::VecDeque,
+    sync::atomic::{AtomicU64, Ordering},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+const RATE_LIMIT_CLEANUP_INTERVAL_SECONDS: u64 = 60;
 
 #[derive(Clone)]
 pub struct SimpleRateLimiter {
     max_requests: u32,
     window: Duration,
     entries: Arc<DashMap<String, VecDeque<Instant>, ahash::RandomState>>,
+    last_cleanup_epoch_seconds: Arc<AtomicU64>,
 }
 
 impl SimpleRateLimiter {
     pub fn new(max_requests: u32, window: Duration) -> Self {
+        let now_epoch_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
         Self {
             max_requests,
             window,
             entries: Arc::new(DashMap::with_hasher(ahash::RandomState::new())),
+            last_cleanup_epoch_seconds: Arc::new(AtomicU64::new(now_epoch_seconds)),
         }
     }
 
     pub async fn allow(&self, key: &str) -> bool {
         let now = Instant::now();
         let cutoff = now - self.window;
+        self.maybe_cleanup(cutoff);
 
         let mut bucket = self.entries.entry(key.to_string()).or_default();
 
@@ -48,6 +58,45 @@ impl SimpleRateLimiter {
 
         bucket.push_back(now);
         true
+    }
+
+    fn maybe_cleanup(&self, cutoff: Instant) {
+        let now_epoch_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let last = self.last_cleanup_epoch_seconds.load(Ordering::Relaxed);
+
+        if now_epoch_seconds.saturating_sub(last) < RATE_LIMIT_CLEANUP_INTERVAL_SECONDS {
+            return;
+        }
+
+        if self
+            .last_cleanup_epoch_seconds
+            .compare_exchange(last, now_epoch_seconds, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+
+        let mut stale_keys = Vec::new();
+        for mut item in self.entries.iter_mut() {
+            while let Some(front) = item.front() {
+                if *front < cutoff {
+                    item.pop_front();
+                } else {
+                    break;
+                }
+            }
+
+            if item.is_empty() {
+                stale_keys.push(item.key().clone());
+            }
+        }
+
+        for key in stale_keys {
+            self.entries.remove(&key);
+        }
     }
 }
 
