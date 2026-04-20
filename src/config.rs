@@ -9,6 +9,8 @@ pub struct Config {
     pub dragonfly_url: String,
     pub paseto_local_key: String,
     pub xchacha20_key: String,
+    pub master_encryption_key: String,
+    pub blind_index_key: String,
     pub cors_allowed_origins: Vec<String>,
     pub request_body_limit_bytes: usize,
     pub rate_limit_requests_per_minute: u32,
@@ -50,6 +52,8 @@ impl Config {
             .unwrap_or_else(|_| "haven-change-me-32-byte-secret-key!".to_string());
         let xchacha20_key = env::var("XCHACHA20_KEY")
             .unwrap_or_else(|_| "haven-change-me-xchacha20-key".to_string());
+        let master_encryption_key = env::var("MASTER_ENCRYPTION_KEY")?;
+        let blind_index_key = env::var("BLIND_INDEX_KEY")?;
         let cors_allowed_origins = env::var("CORS_ALLOWED_ORIGINS")
             .unwrap_or_else(|_| "http://localhost:5173".to_string())
             .split(',')
@@ -119,6 +123,8 @@ impl Config {
             dragonfly_url,
             paseto_local_key,
             xchacha20_key,
+            master_encryption_key,
+            blind_index_key,
             cors_allowed_origins,
             request_body_limit_bytes,
             rate_limit_requests_per_minute,
@@ -148,6 +154,14 @@ impl Config {
 
         if self.xchacha20_key.contains("change-me") || self.xchacha20_key.len() < 32 {
             return Err("XCHACHA20_KEY must be set to a strong secret (>=32 chars)".into());
+        }
+
+        if self.master_encryption_key.len() < 32 {
+            return Err("MASTER_ENCRYPTION_KEY must be set to a strong secret (>=32 chars)".into());
+        }
+
+        if self.blind_index_key.len() < 32 {
+            return Err("BLIND_INDEX_KEY must be set to a strong secret (>=32 chars)".into());
         }
 
         Ok(())
