@@ -1,8 +1,8 @@
 use crate::{
-    domain::auth::{AuthUserResponse, SessionRow, UserAuthRow},
+    domain::auth::{SessionRow, UserAuthRow},
     error::AppError,
 };
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
 
 pub struct NewRegistrationUser {
@@ -10,22 +10,37 @@ pub struct NewRegistrationUser {
     pub username: String,
     pub display_name: String,
     pub email: String,
+    pub email_blind_index: String,
     pub srp_salt: String,
     pub srp_verifier: String,
     pub password_hash: Option<String>,
-    pub date_of_birth: NaiveDate,
+    pub date_of_birth: String,
     pub locale: String,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct StoredAuthUserResponseRow {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub email: String,
+    pub avatar_url: Option<String>,
+    pub email_verified: bool,
+    pub two_factor_enabled: bool,
+    pub account_status: String,
+    pub token_version: i32,
+    pub created_at: DateTime<Utc>,
 }
 
 pub async fn insert_user_for_registration(
     pool: &PgPool,
     new_user: NewRegistrationUser,
-) -> Result<AuthUserResponse, AppError> {
-    let result = sqlx::query_as::<_, AuthUserResponse>(
+) -> Result<StoredAuthUserResponseRow, AppError> {
+    let result = sqlx::query_as::<_, StoredAuthUserResponseRow>(
         r#"
         INSERT INTO users (
-            id, username, display_name, email, srp_salt, srp_verifier, password_hash, date_of_birth, locale
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            id, username, display_name, email, email_blind_index, srp_salt, srp_verifier, password_hash, date_of_birth, locale
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id,
             username,
             display_name,
@@ -42,6 +57,7 @@ pub async fn insert_user_for_registration(
     .bind(new_user.username)
     .bind(new_user.display_name)
     .bind(new_user.email)
+    .bind(new_user.email_blind_index)
     .bind(new_user.srp_salt)
     .bind(new_user.srp_verifier)
     .bind(new_user.password_hash)
@@ -59,18 +75,18 @@ pub async fn insert_user_for_registration(
     }
 }
 
-pub async fn find_user_auth_by_email(
+pub async fn find_user_auth_by_email_blind_index(
     pool: &PgPool,
-    email: &str,
+    email_blind_index: &str,
 ) -> Result<Option<UserAuthRow>, AppError> {
     let user = sqlx::query_as::<_, UserAuthRow>(
         r#"
         SELECT id, srp_salt, srp_verifier, password_hash, account_status, token_version, totp_secret, totp_backup_codes
         FROM users
-        WHERE email = $1
+        WHERE email_blind_index = $1
         "#,
     )
-    .bind(email)
+    .bind(email_blind_index)
     .fetch_optional(pool)
     .await?;
 
@@ -195,8 +211,8 @@ pub async fn commit_tx(tx: Transaction<'_, Postgres>) -> Result<(), AppError> {
 pub async fn find_current_user(
     pool: &PgPool,
     user_id: i64,
-) -> Result<Option<AuthUserResponse>, AppError> {
-    let user = sqlx::query_as::<_, AuthUserResponse>(
+) -> Result<Option<StoredAuthUserResponseRow>, AppError> {
+    let user = sqlx::query_as::<_, StoredAuthUserResponseRow>(
         r#"
         SELECT id,
             username,
@@ -239,18 +255,18 @@ pub struct UserEmailStatusRow {
     pub email_verified: bool,
 }
 
-pub async fn find_user_email_status_by_email(
+pub async fn find_user_email_status_by_blind_index(
     pool: &PgPool,
-    email: &str,
+    email_blind_index: &str,
 ) -> Result<Option<UserEmailStatusRow>, AppError> {
     let row = sqlx::query_as::<_, UserEmailStatusRow>(
         r#"
         SELECT id, email_verified
         FROM users
-        WHERE email = $1
+        WHERE email_blind_index = $1
         "#,
     )
-    .bind(email)
+    .bind(email_blind_index)
     .fetch_optional(pool)
     .await?;
 
