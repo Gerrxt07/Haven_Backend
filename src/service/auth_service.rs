@@ -1156,9 +1156,9 @@ fn totp_code_for_timestamp(secret: &[u8], timestamp: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        decrypt_backup_code_hashes, decrypt_totp_secret, encrypt_backup_code_hashes,
-        compute_email_blind_index, decrypt_user_email, encrypt_date_of_birth, encrypt_user_email,
-        encrypt_totp_secret,
+        compute_email_blind_index, decrypt_backup_code_hashes, decrypt_totp_secret,
+        decrypt_user_email, encrypt_backup_code_hashes, encrypt_date_of_birth, encrypt_totp_secret,
+        encrypt_user_email,
     };
     use crate::crypto::CryptoManager;
     use chrono::NaiveDate;
