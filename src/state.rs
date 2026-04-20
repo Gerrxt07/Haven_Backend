@@ -14,6 +14,7 @@ pub struct AppState {
     pub dragonfly_url: String,
     pub token_manager: Arc<TokenManager>,
     pub crypto_manager: Arc<CryptoManager>,
+    pub data_encryption_manager: Arc<CryptoManager>,
     pub email_client: Arc<EmailClient>,
     pub rate_limiter: Arc<SimpleRateLimiter>,
     pub email_verify_ip_limiter: Arc<SimpleRateLimiter>,
