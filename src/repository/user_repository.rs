@@ -1,21 +1,60 @@
-use crate::{
-    domain::user::{CreateUserRequest, User},
-    error::AppError,
-};
+use crate::error::AppError;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-pub async fn create_user(pool: &PgPool, payload: CreateUserRequest) -> Result<User, AppError> {
-    let user = sqlx::query_as::<_, User>(
+pub struct StoredCreateUser {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub email: String,
+    pub email_blind_index: String,
+    pub password_hash: String,
+    pub date_of_birth: String,
+    pub locale: String,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
+    pub accent_color: Option<String>,
+    pub bio: Option<String>,
+    pub pronouns: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct StoredUserRow {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub email: String,
+    pub email_verified: bool,
+    pub token_version: i32,
+    pub account_status: String,
+    pub flags: i32,
+    pub last_login_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub date_of_birth: String,
+    pub avatar_url: Option<String>,
+    pub banner_url: Option<String>,
+    pub accent_color: Option<String>,
+    pub bio: Option<String>,
+    pub pronouns: Option<String>,
+    pub locale: String,
+}
+
+pub async fn create_user(
+    pool: &PgPool,
+    payload: StoredCreateUser,
+) -> Result<StoredUserRow, AppError> {
+    let user = sqlx::query_as::<_, StoredUserRow>(
         r#"
         INSERT INTO users (
-            id, username, display_name, email, password_hash,
+            id, username, display_name, email, email_blind_index, password_hash,
             date_of_birth, locale, avatar_url, banner_url,
             accent_color, bio, pronouns
         )
         VALUES (
-            $1, $2, $3, $4, $5,
-            $6, $7, $8, $9,
-            $10, $11, $12
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10,
+            $11, $12, $13
         )
         RETURNING
             id, username, display_name, email, email_verified,
@@ -28,6 +67,7 @@ pub async fn create_user(pool: &PgPool, payload: CreateUserRequest) -> Result<Us
     .bind(payload.username)
     .bind(payload.display_name)
     .bind(payload.email)
+    .bind(payload.email_blind_index)
     .bind(payload.password_hash)
     .bind(payload.date_of_birth)
     .bind(payload.locale)
@@ -42,8 +82,8 @@ pub async fn create_user(pool: &PgPool, payload: CreateUserRequest) -> Result<Us
     Ok(user)
 }
 
-pub async fn get_user(pool: &PgPool, id: i64) -> Result<Option<User>, AppError> {
-    let user = sqlx::query_as::<_, User>(
+pub async fn get_user(pool: &PgPool, id: i64) -> Result<Option<StoredUserRow>, AppError> {
+    let user = sqlx::query_as::<_, StoredUserRow>(
         r#"
         SELECT
             id, username, display_name, email, email_verified,
