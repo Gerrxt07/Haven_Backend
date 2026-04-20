@@ -3,12 +3,15 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
 
-    email TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    email_blind_index TEXT NOT NULL UNIQUE,
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
+    srp_salt TEXT,
+    srp_verifier TEXT,
     token_version INTEGER NOT NULL DEFAULT 0,
     totp_secret TEXT,
-    totp_backup_codes TEXT[],
+    totp_backup_codes TEXT,
 
     account_status TEXT NOT NULL DEFAULT 'active' CHECK (account_status IN ('active', 'suspended', 'deleted')),
     flags INTEGER NOT NULL DEFAULT 0,
@@ -16,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    date_of_birth DATE NOT NULL,
+    date_of_birth TEXT NOT NULL,
     avatar_url TEXT,
     banner_url TEXT,
     accent_color TEXT,

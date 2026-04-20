@@ -17,7 +17,6 @@ use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use serde_json::Error as SerdeJsonError;
 use sha1::Sha1;
 use urlencoding::encode;
 use validator::Validate;
@@ -1007,11 +1006,8 @@ fn decrypt_totp_secret(
     user_id: i64,
     value: &str,
 ) -> Result<String, AppError> {
-    if value.starts_with("v1.") {
-        let aad = totp_secret_aad(user_id);
-        return crypto.decrypt_to_string(value, Some(&aad));
-    }
-    Ok(value.to_string())
+    let aad = totp_secret_aad(user_id);
+    crypto.decrypt_to_string(value, Some(&aad))
 }
 
 fn encrypt_backup_code_hashes(
@@ -1025,10 +1021,6 @@ fn encrypt_backup_code_hashes(
     crypto.encrypt_string(&payload, Some(&aad))
 }
 
-fn parse_legacy_backup_code_hashes(value: &str) -> Result<Vec<String>, SerdeJsonError> {
-    serde_json::from_str(value)
-}
-
 fn decrypt_backup_code_hashes(
     crypto: &CryptoManager,
     user_id: i64,
@@ -1038,15 +1030,10 @@ fn decrypt_backup_code_hashes(
         return Ok(Vec::new());
     };
 
-    if value.starts_with("v1.") {
-        let aad = totp_backup_codes_aad(user_id);
-        let plaintext = crypto.decrypt_to_string(value, Some(&aad))?;
-        return serde_json::from_str(&plaintext)
-            .map_err(|err| AppError::Crypto(format!("invalid backup code payload: {err}")));
-    }
-
-    parse_legacy_backup_code_hashes(value)
-        .map_err(|err| AppError::Crypto(format!("invalid legacy backup code payload: {err}")))
+    let aad = totp_backup_codes_aad(user_id);
+    let plaintext = crypto.decrypt_to_string(value, Some(&aad))?;
+    serde_json::from_str(&plaintext)
+        .map_err(|err| AppError::Crypto(format!("invalid backup code payload: {err}")))
 }
 
 fn compute_email_blind_index(blind_index_key: &str, email: &str) -> Result<String, AppError> {
@@ -1073,11 +1060,8 @@ fn decrypt_user_field(
     field: &str,
     value: &str,
 ) -> Result<String, AppError> {
-    if value.starts_with("v1.") {
-        let aad = user_field_aad(user_id, field);
-        return crypto.decrypt_to_string(value, Some(&aad));
-    }
-    Ok(value.to_string())
+    let aad = user_field_aad(user_id, field);
+    crypto.decrypt_to_string(value, Some(&aad))
 }
 
 fn encrypt_user_email(
@@ -1214,17 +1198,6 @@ mod tests {
             .expect("backup code decryption should work");
 
         assert_eq!(decrypted, hashes);
-    }
-
-    #[test]
-    fn legacy_backup_code_hashes_still_parse() {
-        let crypto = CryptoManager::new("unit-test-master-encryption-key-123456");
-        let legacy = "[\"hash-1\",\"hash-2\"]";
-
-        let decrypted = decrypt_backup_code_hashes(&crypto, 7, Some(legacy))
-            .expect("legacy backup code payload should still parse");
-
-        assert_eq!(decrypted, vec!["hash-1".to_string(), "hash-2".to_string()]);
     }
 
     #[test]

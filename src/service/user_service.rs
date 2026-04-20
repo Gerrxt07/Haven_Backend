@@ -135,11 +135,8 @@ fn decrypt_user_field(
     field: &str,
     value: &str,
 ) -> Result<String, AppError> {
-    if value.starts_with("v1.") {
-        let aad = user_field_aad(user_id, field);
-        return crypto.decrypt_to_string(value, Some(&aad));
-    }
-    Ok(value.to_string())
+    let aad = user_field_aad(user_id, field);
+    crypto.decrypt_to_string(value, Some(&aad))
 }
 
 fn encrypt_user_email(
