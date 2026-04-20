@@ -163,7 +163,6 @@ impl Config {
         if self.blind_index_key.len() < 32 {
             return Err("BLIND_INDEX_KEY must be set to a strong secret (>=32 chars)".into());
         }
-
         Ok(())
     }
 }
