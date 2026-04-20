@@ -1,6 +1,6 @@
 use crate::{
     auth::{generate_id, hash_password, sha256_hex, verify_password, AuthTokens},
-    crypto::CryptoManager,
+    crypto::{blind_index_string, CryptoManager},
     domain::auth::{
         AuthUser, AuthUserResponse, EmailVerificationConfirmRequest, EmailVerificationRequest,
         LoginChallengeRequest, LoginChallengeResponse, LoginRequest, LoginVerifyRequest,
@@ -17,7 +17,6 @@ use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use serde_json::Error as SerdeJsonError;
 use sha1::Sha1;
 use urlencoding::encode;
 use validator::Validate;
@@ -66,29 +65,44 @@ impl AuthService {
         }
 
         let user_id = generate_id();
+        let normalized_email = payload.email.trim().to_lowercase();
+        let encrypted_email = encrypt_user_email(
+            &self.state.data_encryption_manager,
+            user_id,
+            &normalized_email,
+        )?;
+        let email_blind_index =
+            compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
+        let encrypted_date_of_birth = encrypt_date_of_birth(
+            &self.state.data_encryption_manager,
+            user_id,
+            &payload.date_of_birth,
+        )?;
 
         let password_hash = payload.password.as_deref().map(hash_password).transpose()?;
 
-        let user = auth_repository::insert_user_for_registration(
+        let stored_user = auth_repository::insert_user_for_registration(
             &self.state.pg_pool,
             auth_repository::NewRegistrationUser {
                 user_id,
                 username: payload.username.trim().to_lowercase(),
                 display_name: payload.display_name.trim().to_string(),
-                email: payload.email.trim().to_lowercase(),
+                email: encrypted_email,
+                email_blind_index,
                 srp_salt: payload.srp_salt,
                 srp_verifier: payload.srp_verifier,
                 password_hash,
-                date_of_birth: payload.date_of_birth,
+                date_of_birth: encrypted_date_of_birth,
                 locale: payload.locale.trim().to_lowercase(),
             },
         )
         .await?;
+        let user = build_auth_user_response(&self.state.data_encryption_manager, stored_user)?;
 
         tracing::info!(
             event = "auth.register",
             user_id = user.id,
-            email = user.email,
+            email = normalized_email,
             "user registered"
         );
         Ok(user)
@@ -105,21 +119,25 @@ impl AuthService {
 
         let normalized_email = payload.email.trim().to_lowercase();
 
-        let user =
-            match auth_repository::find_user_auth_by_email(&self.state.pg_pool, &normalized_email)
-                .await?
-            {
-                Some(user) => user,
-                None => {
-                    tracing::warn!(
-                        event = "auth.login.challenge.failed",
-                        email = normalized_email,
-                        reason = "user_not_found",
-                        "invalid credentials"
-                    );
-                    return Err(AppError::Unauthorized);
-                }
-            };
+        let email_blind_index =
+            compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
+        let user = match auth_repository::find_user_auth_by_email_blind_index(
+            &self.state.pg_pool,
+            &email_blind_index,
+        )
+        .await?
+        {
+            Some(user) => user,
+            None => {
+                tracing::warn!(
+                    event = "auth.login.challenge.failed",
+                    email = normalized_email,
+                    reason = "user_not_found",
+                    "invalid credentials"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        };
 
         if user.account_status != "active" {
             tracing::warn!(
@@ -197,21 +215,25 @@ impl AuthService {
 
         let normalized_email = payload.email.trim().to_lowercase();
 
-        let user =
-            match auth_repository::find_user_auth_by_email(&self.state.pg_pool, &normalized_email)
-                .await?
-            {
-                Some(user) => user,
-                None => {
-                    tracing::warn!(
-                        event = "auth.login.verify.failed",
-                        email = normalized_email,
-                        reason = "user_not_found",
-                        "invalid credentials"
-                    );
-                    return Err(AppError::Unauthorized);
-                }
-            };
+        let email_blind_index =
+            compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
+        let user = match auth_repository::find_user_auth_by_email_blind_index(
+            &self.state.pg_pool,
+            &email_blind_index,
+        )
+        .await?
+        {
+            Some(user) => user,
+            None => {
+                tracing::warn!(
+                    event = "auth.login.verify.failed",
+                    email = normalized_email,
+                    reason = "user_not_found",
+                    "invalid credentials"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        };
 
         if user.account_status != "active" {
             return Err(AppError::Forbidden);
@@ -355,21 +377,25 @@ impl AuthService {
 
         let normalized_email = payload.email.trim().to_lowercase();
 
-        let user =
-            match auth_repository::find_user_auth_by_email(&self.state.pg_pool, &normalized_email)
-                .await?
-            {
-                Some(user) => user,
-                None => {
-                    tracing::warn!(
-                        event = "auth.login.failed",
-                        email = normalized_email,
-                        reason = "user_not_found",
-                        "invalid credentials"
-                    );
-                    return Err(AppError::Unauthorized);
-                }
-            };
+        let email_blind_index =
+            compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
+        let user = match auth_repository::find_user_auth_by_email_blind_index(
+            &self.state.pg_pool,
+            &email_blind_index,
+        )
+        .await?
+        {
+            Some(user) => user,
+            None => {
+                tracing::warn!(
+                    event = "auth.login.failed",
+                    email = normalized_email,
+                    reason = "user_not_found",
+                    "invalid credentials"
+                );
+                return Err(AppError::Unauthorized);
+            }
+        };
 
         if user.account_status != "active" {
             tracing::warn!(
@@ -558,6 +584,7 @@ impl AuthService {
         auth_repository::find_current_user(&self.state.pg_pool, user.id)
             .await?
             .ok_or(AppError::Unauthorized)
+            .and_then(|row| build_auth_user_response(&self.state.data_encryption_manager, row))
     }
 
     pub async fn request_email_verification(
@@ -570,6 +597,8 @@ impl AuthService {
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
         let normalized_email = payload.email.trim().to_lowercase();
+        let email_blind_index =
+            compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
 
         let ip = crate::security::extract_client_ip(headers);
         let ip_key = format!("email-verify:ip:{ip}");
@@ -587,9 +616,9 @@ impl AuthService {
             return Err(AppError::TooManyRequests);
         }
 
-        let user = match auth_repository::find_user_email_status_by_email(
+        let user = match auth_repository::find_user_email_status_by_blind_index(
             &self.state.pg_pool,
-            &normalized_email,
+            &email_blind_index,
         )
         .await?
         {
@@ -655,9 +684,11 @@ impl AuthService {
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
         let normalized_email = payload.email.trim().to_lowercase();
-        let user = auth_repository::find_user_email_status_by_email(
+        let email_blind_index =
+            compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
+        let user = auth_repository::find_user_email_status_by_blind_index(
             &self.state.pg_pool,
-            &normalized_email,
+            &email_blind_index,
         )
         .await?
         .ok_or(AppError::Unauthorized)?;
@@ -975,11 +1006,8 @@ fn decrypt_totp_secret(
     user_id: i64,
     value: &str,
 ) -> Result<String, AppError> {
-    if value.starts_with("v1.") {
-        let aad = totp_secret_aad(user_id);
-        return crypto.decrypt_to_string(value, Some(&aad));
-    }
-    Ok(value.to_string())
+    let aad = totp_secret_aad(user_id);
+    crypto.decrypt_to_string(value, Some(&aad))
 }
 
 fn encrypt_backup_code_hashes(
@@ -993,10 +1021,6 @@ fn encrypt_backup_code_hashes(
     crypto.encrypt_string(&payload, Some(&aad))
 }
 
-fn parse_legacy_backup_code_hashes(value: &str) -> Result<Vec<String>, SerdeJsonError> {
-    serde_json::from_str(value)
-}
-
 fn decrypt_backup_code_hashes(
     crypto: &CryptoManager,
     user_id: i64,
@@ -1006,15 +1030,80 @@ fn decrypt_backup_code_hashes(
         return Ok(Vec::new());
     };
 
-    if value.starts_with("v1.") {
-        let aad = totp_backup_codes_aad(user_id);
-        let plaintext = crypto.decrypt_to_string(value, Some(&aad))?;
-        return serde_json::from_str(&plaintext)
-            .map_err(|err| AppError::Crypto(format!("invalid backup code payload: {err}")));
-    }
+    let aad = totp_backup_codes_aad(user_id);
+    let plaintext = crypto.decrypt_to_string(value, Some(&aad))?;
+    serde_json::from_str(&plaintext)
+        .map_err(|err| AppError::Crypto(format!("invalid backup code payload: {err}")))
+}
 
-    parse_legacy_backup_code_hashes(value)
-        .map_err(|err| AppError::Crypto(format!("invalid legacy backup code payload: {err}")))
+fn compute_email_blind_index(blind_index_key: &str, email: &str) -> Result<String, AppError> {
+    blind_index_string(blind_index_key, email)
+}
+
+fn user_field_aad(user_id: i64, field: &str) -> Vec<u8> {
+    format!("user:{user_id}:{field}").into_bytes()
+}
+
+fn encrypt_user_field(
+    crypto: &CryptoManager,
+    user_id: i64,
+    field: &str,
+    value: &str,
+) -> Result<String, AppError> {
+    let aad = user_field_aad(user_id, field);
+    crypto.encrypt_string(value, Some(&aad))
+}
+
+fn decrypt_user_field(
+    crypto: &CryptoManager,
+    user_id: i64,
+    field: &str,
+    value: &str,
+) -> Result<String, AppError> {
+    let aad = user_field_aad(user_id, field);
+    crypto.decrypt_to_string(value, Some(&aad))
+}
+
+fn encrypt_user_email(
+    crypto: &CryptoManager,
+    user_id: i64,
+    email: &str,
+) -> Result<String, AppError> {
+    encrypt_user_field(crypto, user_id, "email", email)
+}
+
+fn decrypt_user_email(
+    crypto: &CryptoManager,
+    user_id: i64,
+    email: &str,
+) -> Result<String, AppError> {
+    decrypt_user_field(crypto, user_id, "email", email)
+}
+
+fn encrypt_date_of_birth(
+    crypto: &CryptoManager,
+    user_id: i64,
+    date_of_birth: &chrono::NaiveDate,
+) -> Result<String, AppError> {
+    encrypt_user_field(crypto, user_id, "date_of_birth", &date_of_birth.to_string())
+}
+
+fn build_auth_user_response(
+    crypto: &CryptoManager,
+    row: auth_repository::StoredAuthUserResponseRow,
+) -> Result<AuthUserResponse, AppError> {
+    Ok(AuthUserResponse {
+        id: row.id,
+        username: row.username,
+        display_name: row.display_name,
+        email: decrypt_user_email(crypto, row.id, &row.email)?,
+        avatar_url: row.avatar_url,
+        email_verified: row.email_verified,
+        two_factor_enabled: row.two_factor_enabled,
+        account_status: row.account_status,
+        token_version: row.token_version,
+        created_at: row.created_at,
+    })
 }
 
 fn consume_backup_code(stored_hashes: &[String], provided: &str) -> Option<Vec<String>> {
@@ -1068,9 +1157,23 @@ fn totp_code_for_timestamp(secret: &[u8], timestamp: i64) -> String {
 mod tests {
     use super::{
         decrypt_backup_code_hashes, decrypt_totp_secret, encrypt_backup_code_hashes,
+        compute_email_blind_index, decrypt_user_email, encrypt_date_of_birth, encrypt_user_email,
         encrypt_totp_secret,
     };
     use crate::crypto::CryptoManager;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn email_blind_index_is_stable() {
+        let left =
+            compute_email_blind_index("blind-index-key-12345678901234567890", "user@example.com")
+                .expect("blind index should work");
+        let right =
+            compute_email_blind_index("blind-index-key-12345678901234567890", "user@example.com")
+                .expect("blind index should work");
+
+        assert_eq!(left, right);
+    }
 
     #[test]
     fn totp_secret_roundtrips_with_master_key() {
@@ -1098,13 +1201,24 @@ mod tests {
     }
 
     #[test]
-    fn legacy_backup_code_hashes_still_parse() {
+    fn encrypted_email_roundtrips() {
         let crypto = CryptoManager::new("unit-test-master-encryption-key-123456");
-        let legacy = "[\"hash-1\",\"hash-2\"]";
+        let encrypted =
+            encrypt_user_email(&crypto, 42, "user@example.com").expect("email encrypts");
+        let decrypted = decrypt_user_email(&crypto, 42, &encrypted).expect("email decrypts");
 
-        let decrypted = decrypt_backup_code_hashes(&crypto, 7, Some(legacy))
-            .expect("legacy backup code payload should still parse");
+        assert_eq!(decrypted, "user@example.com");
+        assert_ne!(encrypted, "user@example.com");
+    }
 
-        assert_eq!(decrypted, vec!["hash-1".to_string(), "hash-2".to_string()]);
+    #[test]
+    fn encrypted_date_of_birth_roundtrips() {
+        let crypto = CryptoManager::new("unit-test-master-encryption-key-123456");
+        let date = NaiveDate::from_ymd_opt(2000, 1, 1).expect("valid date");
+        let encrypted = encrypt_date_of_birth(&crypto, 9, &date).expect("dob encrypts");
+        let decrypted = super::decrypt_user_field(&crypto, 9, "date_of_birth", &encrypted)
+            .expect("dob decrypts");
+
+        assert_eq!(decrypted, date.to_string());
     }
 }

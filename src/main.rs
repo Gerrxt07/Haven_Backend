@@ -185,6 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         token_manager,
         crypto_manager,
         data_encryption_manager,
+        blind_index_key: Arc::new(config.blind_index_key.clone()),
         email_client,
         rate_limiter,
         email_verify_ip_limiter,

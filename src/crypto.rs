@@ -4,8 +4,11 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
     KeyInit, XChaCha20Poly1305, XNonce,
 };
+use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone)]
 pub struct CryptoManager {
@@ -93,9 +96,16 @@ impl CryptoManager {
     }
 }
 
+pub fn blind_index_string(secret: &str, value: &str) -> Result<String, AppError> {
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(secret.as_bytes())
+        .map_err(|_| AppError::Crypto("invalid blind index key".to_string()))?;
+    mac.update(value.as_bytes());
+    Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::CryptoManager;
+    use super::{blind_index_string, CryptoManager};
 
     #[test]
     fn encrypt_decrypt_roundtrip_with_aad() {
@@ -137,5 +147,16 @@ mod tests {
             .expect_err("invalid token format must fail");
 
         assert!(err.to_string().contains("invalid token format"));
+    }
+
+    #[test]
+    fn blind_index_is_deterministic() {
+        let left =
+            blind_index_string("blind-index-key", "user@example.com").expect("index should work");
+        let right =
+            blind_index_string("blind-index-key", "user@example.com").expect("index should work");
+
+        assert_eq!(left, right);
+        assert_ne!(left, "user@example.com");
     }
 }
