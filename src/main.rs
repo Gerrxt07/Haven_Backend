@@ -153,10 +153,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.refresh_token_ttl_days,
     ));
     let crypto_manager = Arc::new(CryptoManager::new(&config.xchacha20_key));
+    let data_encryption_manager = Arc::new(CryptoManager::new(&config.master_encryption_key));
     let probe = crypto_manager.encrypt_string("haven-crypto-probe", Some(b"startup"))?;
     let probe_plain = crypto_manager.decrypt_to_string(&probe, Some(b"startup"))?;
     if probe_plain != "haven-crypto-probe" {
         return Err("xchacha20 startup self-test failed".into());
+    }
+    let data_probe =
+        data_encryption_manager.encrypt_string("haven-data-probe", Some(b"startup"))?;
+    let data_probe_plain =
+        data_encryption_manager.decrypt_to_string(&data_probe, Some(b"startup"))?;
+    if data_probe_plain != "haven-data-probe" {
+        return Err("master encryption startup self-test failed".into());
     }
 
     let email_client = Arc::new(EmailClient::new(&config)?);
@@ -176,6 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         dragonfly_url: config.dragonfly_url.clone(),
         token_manager,
         crypto_manager,
+        data_encryption_manager,
         email_client,
         rate_limiter,
         email_verify_ip_limiter,

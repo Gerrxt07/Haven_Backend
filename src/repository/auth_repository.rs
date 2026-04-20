@@ -337,7 +337,7 @@ pub async fn mark_email_verification_code_consumed(
 #[derive(sqlx::FromRow)]
 pub struct TotpSetupRow {
     pub secret: String,
-    pub backup_codes: Vec<String>,
+    pub backup_codes: String,
     pub expires_at: DateTime<Utc>,
 }
 
@@ -345,7 +345,7 @@ pub async fn upsert_totp_setup(
     pool: &PgPool,
     user_id: i64,
     secret: String,
-    backup_codes: Vec<String>,
+    backup_codes: String,
     expires_at: DateTime<Utc>,
 ) -> Result<(), AppError> {
     sqlx::query(
@@ -397,7 +397,7 @@ pub async fn set_user_totp(
     pool: &PgPool,
     user_id: i64,
     secret: String,
-    backup_codes: Vec<String>,
+    backup_codes: String,
 ) -> Result<(), AppError> {
     sqlx::query(
         r#"
@@ -433,7 +433,7 @@ pub async fn clear_user_totp(pool: &PgPool, user_id: i64) -> Result<(), AppError
 pub async fn update_backup_codes(
     pool: &PgPool,
     user_id: i64,
-    backup_codes: Vec<String>,
+    backup_codes: String,
 ) -> Result<(), AppError> {
     sqlx::query("UPDATE users SET totp_backup_codes = $2 WHERE id = $1")
         .bind(user_id)

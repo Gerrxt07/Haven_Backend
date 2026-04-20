@@ -115,7 +115,7 @@ pub struct UserAuthRow {
     pub account_status: String,
     pub token_version: i32,
     pub totp_secret: Option<String>,
-    pub totp_backup_codes: Option<Vec<String>>,
+    pub totp_backup_codes: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]

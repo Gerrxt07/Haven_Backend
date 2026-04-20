@@ -1,5 +1,6 @@
 use crate::{
     auth::{generate_id, hash_password, sha256_hex, verify_password, AuthTokens},
+    crypto::CryptoManager,
     domain::auth::{
         AuthUser, AuthUserResponse, EmailVerificationConfirmRequest, EmailVerificationRequest,
         LoginChallengeRequest, LoginChallengeResponse, LoginRequest, LoginVerifyRequest,
@@ -16,6 +17,7 @@ use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use serde_json::Error as SerdeJsonError;
 use sha1::Sha1;
 use urlencoding::encode;
 use validator::Validate;
@@ -256,10 +258,15 @@ impl AuthService {
             })?;
 
         // Handle 2FA if enabled
-        if let Some(secret) = &user.totp_secret {
+        if let Some(secret) = user
+            .totp_secret
+            .as_deref()
+            .map(|value| decrypt_totp_secret(&self.state.data_encryption_manager, user.id, value))
+            .transpose()?
+        {
             match (payload.totp_code.as_deref(), payload.backup_code.as_deref()) {
                 (Some(code), _) => {
-                    if !verify_totp_code(secret, code)? {
+                    if !verify_totp_code(&secret, code)? {
                         tracing::warn!(
                             event = "auth.login.verify.failed",
                             email = payload.email,
@@ -270,7 +277,11 @@ impl AuthService {
                     }
                 }
                 (None, Some(backup_code)) => {
-                    let current_codes = user.totp_backup_codes.clone().unwrap_or_default();
+                    let current_codes = decrypt_backup_code_hashes(
+                        &self.state.data_encryption_manager,
+                        user.id,
+                        user.totp_backup_codes.as_deref(),
+                    )?;
                     let updated_codes = consume_backup_code(&current_codes, backup_code)
                         .ok_or_else(|| {
                             tracing::warn!(
@@ -281,10 +292,15 @@ impl AuthService {
                             );
                             AppError::Unauthorized
                         })?;
+                    let encrypted_codes = encrypt_backup_code_hashes(
+                        &self.state.data_encryption_manager,
+                        user.id,
+                        &updated_codes,
+                    )?;
                     auth_repository::update_backup_codes(
                         &self.state.pg_pool,
                         user.id,
-                        updated_codes,
+                        encrypted_codes,
                     )
                     .await?;
                 }
@@ -385,10 +401,15 @@ impl AuthService {
             return Err(AppError::Unauthorized);
         }
 
-        if let Some(secret) = &user.totp_secret {
+        if let Some(secret) = user
+            .totp_secret
+            .as_deref()
+            .map(|value| decrypt_totp_secret(&self.state.data_encryption_manager, user.id, value))
+            .transpose()?
+        {
             match (payload.totp_code.as_deref(), payload.backup_code.as_deref()) {
                 (Some(code), _) => {
-                    if !verify_totp_code(secret, code)? {
+                    if !verify_totp_code(&secret, code)? {
                         tracing::warn!(
                             event = "auth.login.failed",
                             email = payload.email,
@@ -399,7 +420,11 @@ impl AuthService {
                     }
                 }
                 (None, Some(backup_code)) => {
-                    let current_codes = user.totp_backup_codes.clone().unwrap_or_default();
+                    let current_codes = decrypt_backup_code_hashes(
+                        &self.state.data_encryption_manager,
+                        user.id,
+                        user.totp_backup_codes.as_deref(),
+                    )?;
                     let updated_codes = consume_backup_code(&current_codes, backup_code)
                         .ok_or_else(|| {
                             tracing::warn!(
@@ -410,10 +435,15 @@ impl AuthService {
                             );
                             AppError::Unauthorized
                         })?;
+                    let encrypted_codes = encrypt_backup_code_hashes(
+                        &self.state.data_encryption_manager,
+                        user.id,
+                        &updated_codes,
+                    )?;
                     auth_repository::update_backup_codes(
                         &self.state.pg_pool,
                         user.id,
-                        updated_codes,
+                        encrypted_codes,
                     )
                     .await?;
                 }
@@ -675,13 +705,20 @@ impl AuthService {
         let secret = generate_totp_secret();
         let backup_codes = generate_backup_codes();
         let hashed_backup_codes = hash_backup_codes(&backup_codes);
+        let encrypted_secret =
+            encrypt_totp_secret(&self.state.data_encryption_manager, user.id, &secret)?;
+        let encrypted_backup_codes = encrypt_backup_code_hashes(
+            &self.state.data_encryption_manager,
+            user.id,
+            &hashed_backup_codes,
+        )?;
         let expires_at = Utc::now() + Duration::minutes(TOTP_SETUP_TTL_MINUTES);
 
         auth_repository::upsert_totp_setup(
             &self.state.pg_pool,
             user.id,
-            secret.clone(),
-            hashed_backup_codes,
+            encrypted_secret,
+            encrypted_backup_codes,
             expires_at,
         )
         .await?;
@@ -715,7 +752,9 @@ impl AuthService {
             return Err(AppError::BadRequest("2fa setup expired".to_string()));
         }
 
-        if !verify_totp_code(&setup.secret, payload.code.trim())? {
+        let secret =
+            decrypt_totp_secret(&self.state.data_encryption_manager, user.id, &setup.secret)?;
+        if !verify_totp_code(&secret, payload.code.trim())? {
             return Err(AppError::BadRequest("invalid 2fa code".to_string()));
         }
 
@@ -745,9 +784,16 @@ impl AuthService {
 
         let secret = current
             .totp_secret
+            .as_deref()
+            .map(|value| decrypt_totp_secret(&self.state.data_encryption_manager, user.id, value))
+            .transpose()?
             .ok_or_else(|| AppError::BadRequest("2fa not enabled".to_string()))?;
 
-        let mut backup_codes = current.totp_backup_codes.clone().unwrap_or_default();
+        let mut backup_codes = decrypt_backup_code_hashes(
+            &self.state.data_encryption_manager,
+            user.id,
+            current.totp_backup_codes.as_deref(),
+        )?;
 
         let mut verified = false;
         if let Some(code) = payload.code.as_deref() {
@@ -758,10 +804,15 @@ impl AuthService {
             if let Some(backup_code) = payload.backup_code.as_deref() {
                 if let Some(updated) = consume_backup_code(&backup_codes, backup_code) {
                     backup_codes = updated;
+                    let encrypted_codes = encrypt_backup_code_hashes(
+                        &self.state.data_encryption_manager,
+                        user.id,
+                        &backup_codes,
+                    )?;
                     auth_repository::update_backup_codes(
                         &self.state.pg_pool,
                         user.id,
-                        backup_codes,
+                        encrypted_codes,
                     )
                     .await?;
                     verified = true;
@@ -902,6 +953,70 @@ fn hash_backup_codes(codes: &[String]) -> Vec<String> {
     codes.iter().map(|c| sha256_hex(c)).collect()
 }
 
+fn totp_secret_aad(user_id: i64) -> Vec<u8> {
+    format!("totp:secret:{user_id}").into_bytes()
+}
+
+fn totp_backup_codes_aad(user_id: i64) -> Vec<u8> {
+    format!("totp:backup-codes:{user_id}").into_bytes()
+}
+
+fn encrypt_totp_secret(
+    crypto: &CryptoManager,
+    user_id: i64,
+    secret: &str,
+) -> Result<String, AppError> {
+    let aad = totp_secret_aad(user_id);
+    crypto.encrypt_string(secret, Some(&aad))
+}
+
+fn decrypt_totp_secret(
+    crypto: &CryptoManager,
+    user_id: i64,
+    value: &str,
+) -> Result<String, AppError> {
+    if value.starts_with("v1.") {
+        let aad = totp_secret_aad(user_id);
+        return crypto.decrypt_to_string(value, Some(&aad));
+    }
+    Ok(value.to_string())
+}
+
+fn encrypt_backup_code_hashes(
+    crypto: &CryptoManager,
+    user_id: i64,
+    hashes: &[String],
+) -> Result<String, AppError> {
+    let aad = totp_backup_codes_aad(user_id);
+    let payload = serde_json::to_string(hashes)
+        .map_err(|err| AppError::Service(format!("failed to serialize backup codes: {err}")))?;
+    crypto.encrypt_string(&payload, Some(&aad))
+}
+
+fn parse_legacy_backup_code_hashes(value: &str) -> Result<Vec<String>, SerdeJsonError> {
+    serde_json::from_str(value)
+}
+
+fn decrypt_backup_code_hashes(
+    crypto: &CryptoManager,
+    user_id: i64,
+    value: Option<&str>,
+) -> Result<Vec<String>, AppError> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    if value.starts_with("v1.") {
+        let aad = totp_backup_codes_aad(user_id);
+        let plaintext = crypto.decrypt_to_string(value, Some(&aad))?;
+        return serde_json::from_str(&plaintext)
+            .map_err(|err| AppError::Crypto(format!("invalid backup code payload: {err}")));
+    }
+
+    parse_legacy_backup_code_hashes(value)
+        .map_err(|err| AppError::Crypto(format!("invalid legacy backup code payload: {err}")))
+}
+
 fn consume_backup_code(stored_hashes: &[String], provided: &str) -> Option<Vec<String>> {
     let incoming_hash = sha256_hex(provided.trim());
     if !stored_hashes.iter().any(|hash| hash == &incoming_hash) {
@@ -947,4 +1062,49 @@ fn totp_code_for_timestamp(secret: &[u8], timestamp: i64) -> String {
     let modulo = 10_u32.pow(TOTP_DIGITS);
     let value = binary % modulo;
     format!("{:0width$}", value, width = TOTP_DIGITS as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        decrypt_backup_code_hashes, decrypt_totp_secret, encrypt_backup_code_hashes,
+        encrypt_totp_secret,
+    };
+    use crate::crypto::CryptoManager;
+
+    #[test]
+    fn totp_secret_roundtrips_with_master_key() {
+        let crypto = CryptoManager::new("unit-test-master-encryption-key-123456");
+        let encrypted =
+            encrypt_totp_secret(&crypto, 42, "ABCDEFGH").expect("secret encryption should work");
+
+        assert_ne!(encrypted, "ABCDEFGH");
+        let decrypted =
+            decrypt_totp_secret(&crypto, 42, &encrypted).expect("secret decryption should work");
+        assert_eq!(decrypted, "ABCDEFGH");
+    }
+
+    #[test]
+    fn backup_code_hashes_roundtrip_with_master_key() {
+        let crypto = CryptoManager::new("unit-test-master-encryption-key-123456");
+        let hashes = vec!["hash-1".to_string(), "hash-2".to_string()];
+
+        let encrypted = encrypt_backup_code_hashes(&crypto, 42, &hashes)
+            .expect("backup code encryption should work");
+        let decrypted = decrypt_backup_code_hashes(&crypto, 42, Some(&encrypted))
+            .expect("backup code decryption should work");
+
+        assert_eq!(decrypted, hashes);
+    }
+
+    #[test]
+    fn legacy_backup_code_hashes_still_parse() {
+        let crypto = CryptoManager::new("unit-test-master-encryption-key-123456");
+        let legacy = "[\"hash-1\",\"hash-2\"]";
+
+        let decrypted = decrypt_backup_code_hashes(&crypto, 7, Some(legacy))
+            .expect("legacy backup code payload should still parse");
+
+        assert_eq!(decrypted, vec!["hash-1".to_string(), "hash-2".to_string()]);
+    }
 }
