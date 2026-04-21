@@ -9,3 +9,5 @@
 2026-04-21T10:38:34+02:00 [USER] Redesign, write, and format the backend README in the same modern style as the client README.
 2026-04-21T10:38:34+02:00 [CODE] Replaced the backend README with a modern overview covering security architecture, feature set, stack, API surface, OpenAPI usage, and project structure.
 2026-04-21T10:38:34+02:00 [ASSUMPTION] Backend README update is documentation-only; no Rust code paths changed.
+2026-04-21T11:05:00+02:00 [USER] Push the backend docs OpenAPI files directly to master.
+2026-04-21T11:05:00+02:00 [CODE] Staged the untracked `docs/openapi.yaml` file for a direct master commit.

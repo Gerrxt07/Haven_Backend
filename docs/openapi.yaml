@@ -1,0 +1,1977 @@
+openapi: 3.0.3
+info:
+  title: Haven Backend HTTP API
+  version: 0.1.0
+  description: |
+    OpenAPI document for the Haven backend HTTP surface.
+
+    Base path is `/api/v1`.
+    WebSocket upgrade endpoints (`/ws` and `/realtime/ws`) are not represented here.
+servers:
+  - url: http://localhost:8086/api/v1
+    description: Local development
+tags:
+  - name: Health
+  - name: Auth
+  - name: Users
+  - name: Friends
+  - name: Chat
+  - name: E2EE
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Backend dependencies are healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: One or more backend dependencies are down.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register user
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Registered user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUserResponse'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Legacy password login
+      description: Legacy login path kept for backward compatibility during SRP transition.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Access and refresh tokens.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokens'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/login/challenge:
+    post:
+      tags: [Auth]
+      summary: Start SRP login
+      operationId: loginChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginChallengeRequest'
+      responses:
+        '200':
+          description: SRP challenge payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginChallengeResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/login/verify:
+    post:
+      tags: [Auth]
+      summary: Complete SRP login
+      operationId: loginVerify
+      parameters:
+        - name: x-srp-challenge-id
+          in: header
+          required: true
+          description: Challenge id returned by `/auth/login/challenge`.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginVerifyRequest'
+      responses:
+        '200':
+          description: Verified session and issued tokens.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginVerifyResponse'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh tokens
+      operationId: refreshTokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Refreshed access and refresh tokens.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokens'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated user
+      operationId: getAuthMe
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUserResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/email/verification/request:
+    post:
+      tags: [Auth]
+      summary: Request email verification code
+      operationId: requestEmailVerification
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationRequest'
+      responses:
+        '200':
+          description: Verification request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/email/verification/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirm email verification code
+      operationId: confirmEmailVerification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailVerificationConfirmRequest'
+      responses:
+        '200':
+          description: Email confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/2fa/setup:
+    post:
+      tags: [Auth]
+      summary: Start two-factor setup
+      operationId: setupTwoFactor
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: TOTP setup payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TwoFactorSetupResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/2fa/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirm two-factor setup
+      operationId: confirmTwoFactor
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TwoFactorConfirmRequest'
+      responses:
+        '200':
+          description: Two-factor confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /auth/2fa/disable:
+    post:
+      tags: [Auth]
+      summary: Disable two-factor
+      operationId: disableTwoFactor
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TwoFactorDisableRequest'
+      responses:
+        '200':
+          description: Two-factor disabled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /users:
+    post:
+      tags: [Users]
+      summary: Create user directly
+      description: Low-level user creation path. Registration should prefer `/auth/register`.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '200':
+          description: Created user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by id
+      operationId: getUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: User payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /users/me/avatar:
+    post:
+      tags: [Users]
+      summary: Upload avatar
+      operationId: uploadAvatar
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JPG or PNG image, max 5 MB.
+      responses:
+        '200':
+          description: Optimized avatar metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvatarUploadResponse'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /media/avatars/{user_id}/avatar.webp:
+    get:
+      tags: [Users]
+      summary: Get avatar image
+      operationId: getAvatar
+      parameters:
+        - $ref: '#/components/parameters/UserIdPathLower'
+      responses:
+        '200':
+          description: Avatar image in WebP format.
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /friends:
+    get:
+      tags: [Friends]
+      summary: List friends
+      operationId: listFriends
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Accepted friend relations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Friend'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /friends/request:
+    post:
+      tags: [Friends]
+      summary: Send friend request
+      operationId: sendFriendRequest
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendFriendRequest'
+      responses:
+        '200':
+          description: Created friend request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FriendRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /friends/requests/incoming:
+    get:
+      tags: [Friends]
+      summary: List incoming friend requests
+      operationId: listIncomingFriendRequests
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Incoming friend requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FriendRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /friends/requests/outgoing:
+    get:
+      tags: [Friends]
+      summary: List outgoing friend requests
+      operationId: listOutgoingFriendRequests
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Outgoing friend requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FriendRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /friends/requests/{request_id}/accept:
+    post:
+      tags: [Friends]
+      summary: Accept friend request
+      operationId: acceptFriendRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdPath'
+      responses:
+        '200':
+          description: Updated friend request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FriendRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /friends/requests/{request_id}/decline:
+    post:
+      tags: [Friends]
+      summary: Decline friend request
+      operationId: declineFriendRequest
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdPath'
+      responses:
+        '200':
+          description: Updated friend request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FriendRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /servers:
+    post:
+      tags: [Chat]
+      summary: Create server
+      operationId: createServer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateServerRequest'
+      responses:
+        '200':
+          description: Created server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Server'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /channels:
+    post:
+      tags: [Chat]
+      summary: Create channel with server id in body
+      operationId: createChannelDirect
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChannelDirectRequest'
+      responses:
+        '200':
+          description: Created channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /messages:
+    post:
+      tags: [Chat]
+      summary: Create message with channel id in body
+      operationId: createMessageDirect
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMessageDirectRequest'
+      responses:
+        '200':
+          description: Created message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /dm/threads:
+    post:
+      tags: [Chat]
+      summary: Create direct-message thread
+      operationId: createDmThread
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDmThreadRequest'
+      responses:
+        '200':
+          description: Created DM thread summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DmThreadSummary'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '409':
+          $ref: '#/components/responses/ErrorConflict'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+    get:
+      tags: [Chat]
+      summary: List direct-message threads
+      operationId: listDmThreads
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BeforeQuery'
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: DM thread summaries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DmThreadSummary'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /dm/threads/{thread_id}/messages:
+    post:
+      tags: [Chat]
+      summary: Create direct-message payload
+      operationId: createDmMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ThreadIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDmMessageRequest'
+      responses:
+        '200':
+          description: Created DM message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DmMessage'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+    get:
+      tags: [Chat]
+      summary: List direct-message payloads
+      operationId: listDmMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ThreadIdPath'
+        - $ref: '#/components/parameters/BeforeQuery'
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: DM messages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DmMessage'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /servers/{server_id}/channels:
+    post:
+      tags: [Chat]
+      summary: Create server channel
+      operationId: createChannel
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ServerIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChannelRequest'
+      responses:
+        '200':
+          description: Created channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+    get:
+      tags: [Chat]
+      summary: List server channels
+      operationId: listChannels
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ServerIdPath'
+        - $ref: '#/components/parameters/BeforeQuery'
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: Channel list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /channels/{channel_id}/messages:
+    post:
+      tags: [Chat]
+      summary: Create channel message
+      operationId: createMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChannelIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMessageRequest'
+      responses:
+        '200':
+          description: Created message.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+    get:
+      tags: [Chat]
+      summary: List channel messages
+      operationId: listMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChannelIdPath'
+        - $ref: '#/components/parameters/BeforeQuery'
+        - $ref: '#/components/parameters/LimitQuery'
+      responses:
+        '200':
+          description: Message list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/ErrorBadRequest'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /e2ee/keys/bundle:
+    post:
+      tags: [E2EE]
+      summary: Upload public key bundle
+      operationId: uploadKeyBundle
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadKeyBundleRequest'
+      responses:
+        '200':
+          description: Upload accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /e2ee/keys/bundle/{user_id}:
+    get:
+      tags: [E2EE]
+      summary: Get public key bundle
+      operationId: getPublicKeyBundle
+      parameters:
+        - $ref: '#/components/parameters/UserIdPathLower'
+      responses:
+        '200':
+          description: Public key bundle.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeyBundle'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+  /e2ee/keys/claim:
+    post:
+      tags: [E2EE]
+      summary: Claim one-time prekey bundle
+      operationId: claimPrekeyBundle
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimPrekeyRequest'
+      responses:
+        '200':
+          description: Claimed key bundle with one-time prekey.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyBundleWithPrekey'
+        '401':
+          $ref: '#/components/responses/ErrorUnauthorized'
+        '404':
+          $ref: '#/components/responses/ErrorNotFound'
+        '422':
+          $ref: '#/components/responses/ErrorValidation'
+        '429':
+          $ref: '#/components/responses/ErrorTooManyRequests'
+        '500':
+          $ref: '#/components/responses/ErrorInternal'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: PASETO
+  parameters:
+    UserIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    UserIdPathLower:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    RequestIdPath:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ServerIdPath:
+      name: server_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ChannelIdPath:
+      name: channel_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ThreadIdPath:
+      name: thread_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    BeforeQuery:
+      name: before
+      in: query
+      required: false
+      description: Cursor id for older records.
+      schema:
+        type: integer
+        format: int64
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: Max rows to return.
+      schema:
+        type: integer
+        format: int64
+  responses:
+    ErrorBadRequest:
+      description: Bad request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ErrorUnauthorized:
+      description: Unauthorized.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ErrorNotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ErrorConflict:
+      description: Conflict.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ErrorValidation:
+      description: Validation error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ErrorTooManyRequests:
+      description: Rate limit hit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ErrorInternal:
+      description: Internal server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+  schemas:
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    HealthResponse:
+      type: object
+      required: [status, postgres, dragonfly]
+      properties:
+        status:
+          type: string
+          example: ok
+        postgres:
+          type: string
+          example: ok
+        dragonfly:
+          type: string
+          example: ok
+    AuthTokens:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in_seconds]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in_seconds:
+          type: integer
+          format: int64
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - display_name
+        - email
+        - srp_salt
+        - srp_verifier
+        - date_of_birth
+        - locale
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        email:
+          type: string
+          format: email
+        srp_salt:
+          type: string
+          description: Base64 encoded SRP salt from client.
+        srp_verifier:
+          type: string
+          description: Base64 encoded SRP verifier from client.
+        password:
+          type: string
+          nullable: true
+          description: Legacy optional password during transition.
+        date_of_birth:
+          type: string
+          format: date
+        locale:
+          type: string
+          minLength: 2
+          maxLength: 10
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+        totp_code:
+          type: string
+          nullable: true
+        backup_code:
+          type: string
+          nullable: true
+    LoginChallengeRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    LoginChallengeResponse:
+      type: object
+      required: [challenge_id, srp_salt, server_public_key_b]
+      properties:
+        challenge_id:
+          type: string
+        srp_salt:
+          type: string
+        server_public_key_b:
+          type: string
+    LoginVerifyRequest:
+      type: object
+      required: [email, client_public_key_a, client_proof_m1]
+      properties:
+        email:
+          type: string
+          format: email
+        client_public_key_a:
+          type: string
+          description: Base64 encoded SRP client public key A.
+        client_proof_m1:
+          type: string
+          description: Base64 encoded SRP client proof M1.
+        totp_code:
+          type: string
+          nullable: true
+        backup_code:
+          type: string
+          nullable: true
+    LoginVerifyResponse:
+      type: object
+      required:
+        - server_proof_m2
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in_seconds
+      properties:
+        server_proof_m2:
+          type: string
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in_seconds:
+          type: integer
+          format: int64
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+    AuthUserResponse:
+      type: object
+      required:
+        - id
+        - username
+        - display_name
+        - email
+        - email_verified
+        - two_factor_enabled
+        - account_status
+        - token_version
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+        avatar_url:
+          type: string
+          nullable: true
+        email_verified:
+          type: boolean
+        two_factor_enabled:
+          type: boolean
+        account_status:
+          type: string
+        token_version:
+          type: integer
+          format: int32
+        created_at:
+          type: string
+          format: date-time
+    EmailVerificationRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    EmailVerificationConfirmRequest:
+      type: object
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+    TwoFactorSetupResponse:
+      type: object
+      required: [secret, otpauth_url, backup_codes, expires_at]
+      properties:
+        secret:
+          type: string
+        otpauth_url:
+          type: string
+        backup_codes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+    TwoFactorConfirmRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          minLength: 6
+          maxLength: 8
+    TwoFactorDisableRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          nullable: true
+        backup_code:
+          type: string
+          nullable: true
+    CreateUserRequest:
+      type: object
+      required:
+        - id
+        - username
+        - display_name
+        - email
+        - password_hash
+        - date_of_birth
+        - locale
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+        password_hash:
+          type: string
+        date_of_birth:
+          type: string
+          format: date
+        locale:
+          type: string
+        avatar_url:
+          type: string
+          nullable: true
+        banner_url:
+          type: string
+          nullable: true
+        accent_color:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        pronouns:
+          type: string
+          nullable: true
+    User:
+      type: object
+      required:
+        - id
+        - username
+        - display_name
+        - email
+        - email_verified
+        - token_version
+        - account_status
+        - flags
+        - created_at
+        - updated_at
+        - date_of_birth
+        - locale
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+        token_version:
+          type: integer
+          format: int32
+        account_status:
+          type: string
+        flags:
+          type: integer
+          format: int32
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        date_of_birth:
+          type: string
+          format: date
+        avatar_url:
+          type: string
+          nullable: true
+        banner_url:
+          type: string
+          nullable: true
+        accent_color:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        pronouns:
+          type: string
+          nullable: true
+        locale:
+          type: string
+    AvatarUploadResponse:
+      type: object
+      required: [avatar_url, width, height, size_bytes, format]
+      properties:
+        avatar_url:
+          type: string
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+        size_bytes:
+          type: integer
+          format: int64
+        format:
+          type: string
+          example: image/webp
+    SendFriendRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+    FriendRequest:
+      type: object
+      required:
+        - id
+        - from_user_id
+        - from_username
+        - from_display_name
+        - to_user_id
+        - to_username
+        - to_display_name
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        from_user_id:
+          type: integer
+          format: int64
+        from_username:
+          type: string
+        from_display_name:
+          type: string
+        from_avatar_url:
+          type: string
+          nullable: true
+        to_user_id:
+          type: integer
+          format: int64
+        to_username:
+          type: string
+        to_display_name:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Friend:
+      type: object
+      required:
+        - id
+        - user_id
+        - friend_user_id
+        - friend_username
+        - friend_display_name
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        friend_user_id:
+          type: integer
+          format: int64
+        friend_username:
+          type: string
+        friend_display_name:
+          type: string
+        friend_avatar_url:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    CreateServerRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        slug:
+          type: string
+          minLength: 2
+          maxLength: 120
+        description:
+          type: string
+          nullable: true
+        icon_url:
+          type: string
+          nullable: true
+        is_public:
+          type: boolean
+          nullable: true
+    Server:
+      type: object
+      required:
+        - id
+        - owner_user_id
+        - name
+        - slug
+        - is_public
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        owner_user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        icon_url:
+          type: string
+          nullable: true
+        is_public:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreateChannelRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        topic:
+          type: string
+          nullable: true
+        channel_type:
+          type: string
+          nullable: true
+          minLength: 4
+          maxLength: 16
+        position:
+          type: integer
+          format: int32
+          nullable: true
+        is_private:
+          type: boolean
+          nullable: true
+    CreateChannelDirectRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateChannelRequest'
+        - type: object
+          required: [server_id]
+          properties:
+            server_id:
+              type: integer
+              format: int64
+    Channel:
+      type: object
+      required:
+        - id
+        - server_id
+        - name
+        - channel_type
+        - position
+        - is_private
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        server_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        topic:
+          type: string
+          nullable: true
+        channel_type:
+          type: string
+        position:
+          type: integer
+          format: int32
+        is_private:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    RecipientKeyBoxInput:
+      type: object
+      required: [recipient_user_id, encrypted_message_key]
+      properties:
+        recipient_user_id:
+          type: integer
+          format: int64
+        encrypted_message_key:
+          type: string
+        one_time_prekey_id:
+          type: integer
+          format: int64
+          nullable: true
+    CreateMessageRequest:
+      type: object
+      properties:
+        content:
+          type: string
+          nullable: true
+        ciphertext:
+          type: string
+          nullable: true
+        nonce:
+          type: string
+          nullable: true
+        aad:
+          type: string
+          nullable: true
+        algorithm:
+          type: string
+          nullable: true
+        recipient_key_boxes:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/RecipientKeyBoxInput'
+    CreateMessageDirectRequest:
+      allOf:
+        - $ref: '#/components/schemas/CreateMessageRequest'
+        - type: object
+          required: [channel_id]
+          properties:
+            channel_id:
+              type: integer
+              format: int64
+    Message:
+      type: object
+      required:
+        - id
+        - channel_id
+        - author_user_id
+        - content
+        - is_encrypted
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        channel_id:
+          type: integer
+          format: int64
+        author_user_id:
+          type: integer
+          format: int64
+        author_avatar_url:
+          type: string
+          nullable: true
+        content:
+          type: string
+        is_encrypted:
+          type: boolean
+        ciphertext:
+          type: string
+          nullable: true
+        nonce:
+          type: string
+          nullable: true
+        aad:
+          type: string
+          nullable: true
+        algorithm:
+          type: string
+          nullable: true
+        edited_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreateDmThreadRequest:
+      type: object
+      required: [peer_user_id]
+      properties:
+        peer_user_id:
+          type: integer
+          format: int64
+    DmThreadSummary:
+      type: object
+      required:
+        - id
+        - peer_user_id
+        - peer_username
+        - peer_display_name
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        peer_user_id:
+          type: integer
+          format: int64
+        peer_username:
+          type: string
+        peer_display_name:
+          type: string
+        peer_avatar_url:
+          type: string
+          nullable: true
+        last_message_preview:
+          type: string
+          nullable: true
+        last_message_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CreateDmMessageRequest:
+      type: object
+      properties:
+        content:
+          type: string
+          nullable: true
+        ciphertext:
+          type: string
+          nullable: true
+        nonce:
+          type: string
+          nullable: true
+        aad:
+          type: string
+          nullable: true
+        algorithm:
+          type: string
+          nullable: true
+    DmMessage:
+      type: object
+      required:
+        - id
+        - thread_id
+        - author_user_id
+        - content
+        - is_encrypted
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        thread_id:
+          type: integer
+          format: int64
+        author_user_id:
+          type: integer
+          format: int64
+        author_avatar_url:
+          type: string
+          nullable: true
+        content:
+          type: string
+        is_encrypted:
+          type: boolean
+        ciphertext:
+          type: string
+          nullable: true
+        nonce:
+          type: string
+          nullable: true
+        aad:
+          type: string
+          nullable: true
+        algorithm:
+          type: string
+          nullable: true
+        edited_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OneTimePrekeyInput:
+      type: object
+      required: [id, prekey]
+      properties:
+        id:
+          type: integer
+          format: int64
+        prekey:
+          type: string
+    UploadKeyBundleRequest:
+      type: object
+      required:
+        - identity_key
+        - signed_prekey_id
+        - signed_prekey
+        - signed_prekey_signature
+        - one_time_prekeys
+      properties:
+        identity_key:
+          type: string
+        signed_prekey_id:
+          type: integer
+          format: int64
+        signed_prekey:
+          type: string
+        signed_prekey_signature:
+          type: string
+        one_time_prekeys:
+          type: array
+          items:
+            $ref: '#/components/schemas/OneTimePrekeyInput'
+    PublicKeyBundle:
+      type: object
+      required:
+        - user_id
+        - identity_key
+        - signed_prekey_id
+        - signed_prekey
+        - signed_prekey_signature
+        - created_at
+        - updated_at
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        identity_key:
+          type: string
+        signed_prekey_id:
+          type: integer
+          format: int64
+        signed_prekey:
+          type: string
+        signed_prekey_signature:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ClaimPrekeyRequest:
+      type: object
+      required: [target_user_id]
+      properties:
+        target_user_id:
+          type: integer
+          format: int64
+    KeyBundleWithPrekey:
+      type: object
+      required:
+        - user_id
+        - identity_key
+        - signed_prekey_id
+        - signed_prekey
+        - signed_prekey_signature
+        - one_time_prekey_id
+        - one_time_prekey
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        identity_key:
+          type: string
+        signed_prekey_id:
+          type: integer
+          format: int64
+        signed_prekey:
+          type: string
+        signed_prekey_signature:
+          type: string
+        one_time_prekey_id:
+          type: integer
+          format: int64
+        one_time_prekey:
+          type: string
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
