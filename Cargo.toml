@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.8", features = ["ws", "multipart"] }
-argon2 = "0.5"
 base32 = "0.5"
 base64 = "0.22"
 chacha20poly1305 = "0.10"
@@ -23,6 +22,7 @@ num-bigint = "0.4"
 rand = "0.8"
 redis = { version = "0.32", features = ["tokio-comp"] }
 srp = "0.6"
+sonyflake = { version = "0.4", default-features = false }
 rusty_paseto = { version = "0.7", features = ["batteries_included", "v4_local"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

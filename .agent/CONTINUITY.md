@@ -13,3 +13,5 @@
 2026-04-21T11:05:00+02:00 [CODE] Staged the untracked `docs/openapi.yaml` file for a direct master commit.
 2026-04-21T11:11:53+02:00 [USER] Patch and push OpenAPI docs after latest backend auth and message handling changes.
 2026-04-21T11:11:53+02:00 [CODE] Updated `docs/openapi.yaml` to document WebSocket first-message auth notes, shared `403 Forbidden` responses, and `413 Payload Too Large` on message creation routes.
+2026-04-21T12:08:18+02:00 [USER] Implement backend issues #16-#19.
+2026-04-21T12:08:18+02:00 [CODE] Switched ID generation to Sonyflake with a configurable machine-id source, removed legacy password auth and the `/auth/login` route, added login IP rate limiting for SRP challenge/verify, dropped `password_hash` from writes plus added migration `0011_drop_password_hash_from_users.sql`, and invalidated `cache:auth:status:{user_id}` during deleted-account anonymization.

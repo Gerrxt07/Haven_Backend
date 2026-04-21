@@ -1,5 +1,8 @@
 use crate::{
-    crypto::blind_index_string, error::AppError, repository::user_repository, state::AppState,
+    crypto::blind_index_string,
+    error::AppError,
+    repository::{cache_repository, user_repository},
+    state::AppState,
 };
 use chrono::{Duration as ChronoDuration, Local, LocalResult, TimeZone, Timelike, Utc};
 use std::collections::HashSet;
@@ -177,6 +180,7 @@ async fn cleanup_deleted_accounts(state: &AppState) -> Result<(), AppError> {
             &encrypted_dob,
         )
         .await?;
+        cache_repository::invalidate_auth_status_cache(&state.redis_pool, user.id).await?;
         anonymized += 1;
     }
 

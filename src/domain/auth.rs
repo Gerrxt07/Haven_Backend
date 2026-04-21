@@ -29,8 +29,6 @@ pub struct RegisterRequest {
     /// SRP verifier (base64 encoded) - computed by client
     #[validate(length(min = 1, max = SRP_VERIFIER_MAX_LEN), custom(function = "validate_base64"))]
     pub srp_verifier: String,
-    #[serde(default)]
-    pub password: Option<String>,
     pub date_of_birth: NaiveDate,
     #[validate(length(min = 2, max = 10))]
     pub locale: String,
@@ -72,17 +70,6 @@ pub struct LoginVerifyResponse {
     pub expires_in_seconds: i64,
 }
 
-/// Legacy login request - kept for backward compatibility during transition
-#[derive(Deserialize, Validate)]
-pub struct LoginRequest {
-    #[validate(email)]
-    pub email: String,
-    #[validate(length(min = 1, max = 128))]
-    pub password: String,
-    pub totp_code: Option<String>,
-    pub backup_code: Option<String>,
-}
-
 #[derive(Deserialize, Validate)]
 pub struct RefreshRequest {
     #[validate(length(min = 20))]
@@ -110,8 +97,6 @@ pub struct UserAuthRow {
     pub srp_salt: Option<String>,
     /// SRP verifier (base64 encoded)
     pub srp_verifier: Option<String>,
-    /// Legacy password hash - kept for backward compatibility during transition
-    pub password_hash: Option<String>,
     pub account_status: String,
     pub token_version: i32,
     pub totp_secret: Option<String>,
@@ -178,14 +163,13 @@ mod tests {
     use validator::Validate;
 
     #[test]
-    fn register_accepts_optional_legacy_password() {
+    fn register_accepts_srp_only_payload() {
         let payload = RegisterRequest {
             username: "user".to_string(),
             display_name: "User".to_string(),
             email: "user@example.com".to_string(),
             srp_salt: "AQID".to_string(),
             srp_verifier: "AQID".to_string(),
-            password: Some("1234567890".to_string()),
             date_of_birth: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
             locale: "en".to_string(),
         };
@@ -201,7 +185,6 @@ mod tests {
             email: "user@example.com".to_string(),
             srp_salt: "%%%".to_string(),
             srp_verifier: "AQID".to_string(),
-            password: None,
             date_of_birth: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
             locale: "en".to_string(),
         };

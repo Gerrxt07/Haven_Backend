@@ -8,7 +8,8 @@ pub struct StoredCreateUser {
     pub display_name: String,
     pub email: String,
     pub email_blind_index: String,
-    pub password_hash: String,
+    pub srp_salt: String,
+    pub srp_verifier: String,
     pub date_of_birth: String,
     pub locale: String,
     pub avatar_url: Option<String>,
@@ -52,14 +53,12 @@ pub async fn create_user(
     let user = sqlx::query_as::<_, StoredUserRow>(
         r#"
         INSERT INTO users (
-            id, username, display_name, email, email_blind_index, password_hash,
-            date_of_birth, locale, avatar_url, banner_url,
-            accent_color, bio, pronouns
+            id, username, display_name, email, email_blind_index, srp_salt, srp_verifier,
+            date_of_birth, locale, avatar_url, banner_url, accent_color, bio, pronouns
         )
         VALUES (
-            $1, $2, $3, $4, $5, $6,
-            $7, $8, $9, $10,
-            $11, $12, $13
+            $1, $2, $3, $4, $5, $6, $7,
+            $8, $9, $10, $11, $12, $13, $14
         )
         RETURNING
             id, username, display_name, email, email_verified,
@@ -73,7 +72,8 @@ pub async fn create_user(
     .bind(payload.display_name)
     .bind(payload.email)
     .bind(payload.email_blind_index)
-    .bind(payload.password_hash)
+    .bind(payload.srp_salt)
+    .bind(payload.srp_verifier)
     .bind(payload.date_of_birth)
     .bind(payload.locale)
     .bind(payload.avatar_url)
@@ -156,7 +156,6 @@ pub async fn anonymize_deleted_user(
             email = $4,
             email_blind_index = $5,
             email_verified = FALSE,
-            password_hash = NULL,
             srp_salt = NULL,
             srp_verifier = NULL,
             token_version = token_version + 1,

@@ -1,11 +1,11 @@
 use crate::{
-    auth::{generate_id, hash_password, sha256_hex, verify_password, AuthTokens},
+    auth::{generate_id, sha256_hex, AuthTokens},
     crypto::{blind_index_string, CryptoManager},
     domain::auth::{
         AuthUser, AuthUserResponse, EmailVerificationConfirmRequest, EmailVerificationRequest,
-        LoginChallengeRequest, LoginChallengeResponse, LoginRequest, LoginVerifyRequest,
-        LoginVerifyResponse, RefreshRequest, RegisterRequest, StatusResponse,
-        TwoFactorConfirmRequest, TwoFactorDisableRequest, TwoFactorSetupResponse,
+        LoginChallengeRequest, LoginChallengeResponse, LoginVerifyRequest, LoginVerifyResponse,
+        RefreshRequest, RegisterRequest, StatusResponse, TwoFactorConfirmRequest,
+        TwoFactorDisableRequest, TwoFactorSetupResponse,
     },
     error::AppError,
     repository::{auth_repository, cache_repository},
@@ -32,8 +32,6 @@ const TOTP_SETUP_TTL_MINUTES: i64 = 10;
 const BACKUP_CODE_COUNT: usize = 10;
 const BACKUP_CODE_LENGTH: usize = 10;
 const AUTH_STATUS_CACHE_TTL_SECONDS: u64 = 120;
-const LEGACY_PASSWORD_MIN_LEN: usize = 10;
-const LEGACY_PASSWORD_MAX_LEN: usize = 128;
 
 #[derive(Serialize, Deserialize)]
 struct CachedAuthStatus {
@@ -66,14 +64,6 @@ impl AuthService {
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
 
-        if let Some(password) = payload.password.as_deref() {
-            if !(LEGACY_PASSWORD_MIN_LEN..=LEGACY_PASSWORD_MAX_LEN).contains(&password.len()) {
-                return Err(AppError::Validation(
-                    "password must be between 10 and 128 characters".to_string(),
-                ));
-            }
-        }
-
         let user_id = generate_id();
         let normalized_email = payload.email.trim().to_lowercase();
         let encrypted_email = encrypt_user_email(
@@ -89,8 +79,6 @@ impl AuthService {
             &payload.date_of_birth,
         )?;
 
-        let password_hash = payload.password.as_deref().map(hash_password).transpose()?;
-
         let stored_user = auth_repository::insert_user_for_registration(
             &self.state.pg_pool,
             auth_repository::NewRegistrationUser {
@@ -101,7 +89,6 @@ impl AuthService {
                 email_blind_index,
                 srp_salt: payload.srp_salt,
                 srp_verifier: payload.srp_verifier,
-                password_hash,
                 date_of_birth: encrypted_date_of_birth,
                 locale: payload.locale.trim().to_lowercase(),
             },
@@ -121,11 +108,14 @@ impl AuthService {
     /// Step 1 of SRP login: Generate challenge
     pub async fn login_challenge(
         &self,
+        headers: &HeaderMap,
         payload: LoginChallengeRequest,
     ) -> Result<(String, LoginChallengeResponse), AppError> {
         payload
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        self.enforce_login_ip_rate_limit(headers).await?;
 
         let normalized_email = payload.email.trim().to_lowercase();
 
@@ -218,12 +208,15 @@ impl AuthService {
     /// Step 2 of SRP login: Verify client proof and issue tokens
     pub async fn login_verify(
         &self,
+        headers: &HeaderMap,
         challenge_id: String,
         payload: LoginVerifyRequest,
     ) -> Result<LoginVerifyResponse, AppError> {
         payload
             .validate()
             .map_err(|e| AppError::Validation(e.to_string()))?;
+
+        self.enforce_login_ip_rate_limit(headers).await?;
 
         let normalized_email = payload.email.trim().to_lowercase();
 
@@ -339,107 +332,6 @@ impl AuthService {
             token_type: "Bearer",
             expires_in_seconds: tokens.expires_in_seconds,
         })
-    }
-
-    pub async fn login(&self, payload: LoginRequest) -> Result<AuthTokens, AppError> {
-        payload
-            .validate()
-            .map_err(|e| AppError::Validation(e.to_string()))?;
-
-        let normalized_email = payload.email.trim().to_lowercase();
-
-        let email_blind_index =
-            compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
-        self.enforce_login_identity_rate_limit(&email_blind_index)
-            .await?;
-        let user = match auth_repository::find_user_auth_by_email_blind_index(
-            &self.state.pg_pool,
-            &email_blind_index,
-        )
-        .await?
-        {
-            Some(user) => user,
-            None => {
-                tracing::warn!(
-                    event = "auth.login.failed",
-                    email = normalized_email,
-                    reason = "user_not_found",
-                    "invalid credentials"
-                );
-                return Err(AppError::Unauthorized);
-            }
-        };
-
-        if user.account_status != "active" {
-            tracing::warn!(
-                event = "auth.login.blocked",
-                user_id = user.id,
-                status = user.account_status,
-                "blocked login due to account status"
-            );
-            return Err(AppError::Forbidden);
-        }
-
-        // Legacy password verification (for backward compatibility during transition)
-        let password_hash = user.password_hash.ok_or_else(|| {
-            tracing::warn!(
-                event = "auth.login.failed",
-                user_id = user.id,
-                reason = "password_login_not_available",
-                "legacy password login attempted for SRP-only account"
-            );
-            AppError::Unauthorized
-        })?;
-
-        if !verify_password(&password_hash, &payload.password) {
-            tracing::warn!(
-                event = "auth.login.failed",
-                email = payload.email,
-                "invalid password"
-            );
-            return Err(AppError::Unauthorized);
-        }
-
-        self.verify_2fa_credentials(TwoFactorVerification {
-            event_name: "auth.login.failed",
-            user_id: user.id,
-            email: &payload.email,
-            encrypted_secret: user.totp_secret.as_deref(),
-            encrypted_backup_codes: user.totp_backup_codes.as_deref(),
-            totp_code: payload.totp_code.as_deref(),
-            backup_code: payload.backup_code.as_deref(),
-        })
-        .await?;
-
-        let session_id = generate_id();
-        let tokens =
-            self.state
-                .token_manager
-                .issue_tokens(user.id, session_id, user.token_version)?;
-
-        let refresh_hash = sha256_hex(&tokens.refresh_token);
-        let refresh_expires =
-            Utc::now() + Duration::days(self.state.token_manager.refresh_ttl_days());
-
-        auth_repository::insert_auth_session(
-            &self.state.pg_pool,
-            session_id,
-            user.id,
-            refresh_hash,
-            refresh_expires,
-            user.token_version,
-        )
-        .await?;
-
-        auth_repository::update_last_login(&self.state.pg_pool, user.id).await?;
-
-        tracing::info!(
-            event = "auth.login",
-            user_id = user.id,
-            session_id,
-            "login successful"
-        );
-        Ok(tokens)
     }
 
     pub async fn refresh(&self, payload: RefreshRequest) -> Result<AuthTokens, AppError> {
@@ -814,7 +706,7 @@ impl AuthService {
         user_id: i64,
         token_version: i32,
     ) -> Result<AuthUser, AppError> {
-        let status_cache_key = format!("cache:auth:status:{user_id}");
+        let status_cache_key = cache_repository::auth_status_cache_key(user_id);
         let status_row = if let Some(cached) = cache_repository::get_json::<CachedAuthStatus>(
             &self.state.redis_pool,
             &status_cache_key,
@@ -860,6 +752,16 @@ impl AuthService {
     ) -> Result<(), AppError> {
         let key = login_identity_rate_limit_key(email_blind_index);
         if !self.state.login_identity_limiter.allow(&key).await {
+            return Err(AppError::TooManyRequests);
+        }
+
+        Ok(())
+    }
+
+    async fn enforce_login_ip_rate_limit(&self, headers: &HeaderMap) -> Result<(), AppError> {
+        let ip = crate::security::extract_client_ip(headers);
+        let key = login_ip_rate_limit_key(&ip);
+        if !self.state.login_ip_limiter.allow(&key).await {
             return Err(AppError::TooManyRequests);
         }
 
@@ -1131,6 +1033,10 @@ fn login_identity_rate_limit_key(email_blind_index: &str) -> String {
     format!("login:identity:{email_blind_index}")
 }
 
+fn login_ip_rate_limit_key(ip: &str) -> String {
+    format!("login:ip:{ip}")
+}
+
 fn verify_totp_code(secret_base32: &str, code: &str) -> Result<bool, AppError> {
     let secret = base32::decode(base32::Alphabet::Rfc4648 { padding: false }, secret_base32)
         .ok_or_else(|| AppError::BadRequest("invalid 2fa secret".to_string()))?;
@@ -1171,6 +1077,7 @@ mod tests {
         compute_email_blind_index, consume_backup_code, decrypt_backup_code_hashes,
         decrypt_totp_secret, decrypt_user_email, encrypt_backup_code_hashes, encrypt_date_of_birth,
         encrypt_totp_secret, encrypt_user_email, login_identity_rate_limit_key,
+        login_ip_rate_limit_key,
     };
     use crate::auth::sha256_hex;
     use crate::crypto::CryptoManager;
@@ -1250,5 +1157,11 @@ mod tests {
     fn login_identity_rate_limit_key_is_namespaced() {
         let key = login_identity_rate_limit_key("blind-index");
         assert_eq!(key, "login:identity:blind-index");
+    }
+
+    #[test]
+    fn login_ip_rate_limit_key_is_namespaced() {
+        let key = login_ip_rate_limit_key("203.0.113.10");
+        assert_eq!(key, "login:ip:203.0.113.10");
     }
 }
