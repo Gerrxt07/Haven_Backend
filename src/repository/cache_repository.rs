@@ -70,6 +70,17 @@ pub async fn del_key(pool: &deadpool_redis::Pool, key: &str) -> Result<(), AppEr
     Ok(())
 }
 
+pub fn auth_status_cache_key(user_id: i64) -> String {
+    format!("cache:auth:status:{user_id}")
+}
+
+pub async fn invalidate_auth_status_cache(
+    pool: &deadpool_redis::Pool,
+    user_id: i64,
+) -> Result<(), AppError> {
+    del_key(pool, &auth_status_cache_key(user_id)).await
+}
+
 pub async fn invalidate_indexed_keys(
     pool: &deadpool_redis::Pool,
     index_key: &str,
@@ -91,4 +102,14 @@ pub async fn invalidate_indexed_keys(
 
     let _: i32 = conn.del(index_key).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auth_status_cache_key;
+
+    #[test]
+    fn auth_status_cache_key_is_namespaced() {
+        assert_eq!(auth_status_cache_key(42), "cache:auth:status:42");
+    }
 }

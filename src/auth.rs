@@ -1,13 +1,10 @@
 use crate::error::AppError;
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
-    Argon2,
-};
 use chrono::{DateTime, Duration, Utc};
 use rusty_paseto::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::convert::TryFrom;
+use sonyflake::{Builder as SonyflakeBuilder, Sonyflake};
+use std::{convert::TryFrom, error::Error, sync::OnceLock};
 
 #[derive(Clone)]
 pub struct TokenManager {
@@ -32,6 +29,9 @@ pub struct AuthTokens {
     pub token_type: &'static str,
     pub expires_in_seconds: i64,
 }
+
+type MachineIdError = Box<dyn Error + Send + Sync + 'static>;
+static ID_GENERATOR: OnceLock<Sonyflake> = OnceLock::new();
 
 impl TokenManager {
     pub fn new(secret: &str, access_token_ttl_minutes: i64, refresh_token_ttl_days: i64) -> Self {
@@ -156,32 +156,54 @@ impl TokenManager {
     }
 }
 
-pub fn hash_password(password: &str) -> Result<String, AppError> {
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map(|p| p.to_string())
-        .map_err(|_| AppError::BadRequest("failed to hash password".to_string()))
-}
-
-pub fn verify_password(password_hash: &str, password: &str) -> bool {
-    let parsed_hash = match PasswordHash::new(password_hash) {
-        Ok(hash) => hash,
-        Err(_) => return false,
-    };
-
-    Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok()
-}
-
 pub fn sha256_hex(input: &str) -> String {
     let digest = Sha256::digest(input.as_bytes());
     format!("{digest:x}")
 }
 
 pub fn generate_id() -> i64 {
-    let millis = Utc::now().timestamp_millis();
-    let random_bits: i64 = (rand::random::<u16>() as i64) & 0x0fff;
-    (millis << 12) | random_bits
+    let raw_id = id_generator()
+        .next_id()
+        .expect("sonyflake id generation must succeed");
+    i64::try_from(raw_id).expect("sonyflake ids must fit in signed 64-bit storage")
+}
+
+fn id_generator() -> &'static Sonyflake {
+    ID_GENERATOR.get_or_init(|| {
+        SonyflakeBuilder::new()
+            .machine_id(&resolve_machine_id)
+            .finalize()
+            .expect("sonyflake generator must initialize")
+    })
+}
+
+fn resolve_machine_id() -> Result<u16, MachineIdError> {
+    if let Ok(raw) = std::env::var("HAVEN_MACHINE_ID") {
+        return raw
+            .parse::<u16>()
+            .map_err(|err| format!("invalid HAVEN_MACHINE_ID '{raw}': {err}").into());
+    }
+
+    let machine_hint = std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "haven-backend".to_string());
+    let digest = Sha256::digest(machine_hint.as_bytes());
+    Ok(u16::from_be_bytes([digest[0], digest[1]]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_id;
+    use std::collections::HashSet;
+
+    #[test]
+    fn generate_id_returns_positive_unique_values() {
+        let mut values = HashSet::new();
+
+        for _ in 0..1024 {
+            let id = generate_id();
+            assert!(id > 0);
+            assert!(values.insert(id), "generated duplicate id: {id}");
+        }
+    }
 }

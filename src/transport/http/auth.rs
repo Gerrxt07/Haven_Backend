@@ -1,7 +1,7 @@
 use crate::{
     domain::auth::{
         EmailVerificationConfirmRequest, EmailVerificationRequest, LoginChallengeRequest,
-        LoginRequest, LoginVerifyRequest, RefreshRequest, RegisterRequest, StatusResponse,
+        LoginVerifyRequest, RefreshRequest, RegisterRequest, StatusResponse,
         TwoFactorConfirmRequest, TwoFactorDisableRequest, TwoFactorSetupResponse,
     },
     error::AppError,
@@ -18,7 +18,6 @@ use axum::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/auth/register", post(register))
-        .route("/auth/login", post(login))
         .route("/auth/login/challenge", post(login_challenge))
         .route("/auth/login/verify", post(login_verify))
         .route("/auth/refresh", post(refresh))
@@ -45,21 +44,13 @@ async fn register(
     Ok(Json(user))
 }
 
-async fn login(
-    State(state): State<AppState>,
-    Json(payload): Json<LoginRequest>,
-) -> Result<Json<crate::auth::AuthTokens>, AppError> {
-    let service = ServiceFactory::new(state).auth();
-    let tokens = service.login(payload).await?;
-    Ok(Json(tokens))
-}
-
 async fn login_challenge(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<LoginChallengeRequest>,
 ) -> Result<Json<crate::domain::auth::LoginChallengeResponse>, AppError> {
     let service = ServiceFactory::new(state).auth();
-    let (_, response) = service.login_challenge(payload).await?;
+    let (_, response) = service.login_challenge(&headers, payload).await?;
     Ok(Json(response))
 }
 
@@ -77,7 +68,9 @@ async fn login_verify(
         .map(|s| s.to_string())
         .ok_or_else(|| AppError::BadRequest("Missing x-srp-challenge-id header".to_string()))?;
 
-    let response = service.login_verify(challenge_id, payload).await?;
+    let response = service
+        .login_verify(&headers, challenge_id, payload)
+        .await?;
     Ok(Json(response))
 }
 

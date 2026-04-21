@@ -19,6 +19,7 @@ pub struct AppState {
     pub email_client: Arc<EmailClient>,
     pub rate_limiter: Arc<SimpleRateLimiter>,
     pub login_identity_limiter: Arc<SimpleRateLimiter>,
+    pub login_ip_limiter: Arc<SimpleRateLimiter>,
     pub email_verify_ip_limiter: Arc<SimpleRateLimiter>,
     pub email_verify_email_limiter: Arc<SimpleRateLimiter>,
     pub realtime_tx: broadcast::Sender<RealtimeEvent>,

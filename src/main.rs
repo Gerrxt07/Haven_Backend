@@ -173,6 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Duration::from_secs(60),
     ));
     let login_identity_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(60)));
+    let login_ip_limiter = Arc::new(SimpleRateLimiter::new(20, Duration::from_secs(60)));
     let email_verify_ip_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(900)));
     let email_verify_email_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(900)));
     let (realtime_tx, _) = broadcast::channel(512);
@@ -190,6 +191,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         email_client,
         rate_limiter,
         login_identity_limiter,
+        login_ip_limiter,
         email_verify_ip_limiter,
         email_verify_email_limiter,
         realtime_tx,
