@@ -11,3 +11,5 @@
 2026-04-21T10:38:34+02:00 [ASSUMPTION] Backend README update is documentation-only; no Rust code paths changed.
 2026-04-21T11:05:00+02:00 [USER] Push the backend docs OpenAPI files directly to master.
 2026-04-21T11:05:00+02:00 [CODE] Staged the untracked `docs/openapi.yaml` file for a direct master commit.
+2026-04-21T11:11:53+02:00 [USER] Patch and push OpenAPI docs after latest backend auth and message handling changes.
+2026-04-21T11:11:53+02:00 [CODE] Updated `docs/openapi.yaml` to document WebSocket first-message auth notes, shared `403 Forbidden` responses, and `413 Payload Too Large` on message creation routes.

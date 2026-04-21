@@ -7,6 +7,8 @@ info:
 
     Base path is `/api/v1`.
     WebSocket upgrade endpoints (`/ws` and `/realtime/ws`) are not represented here.
+    Current WebSocket auth uses an initial `authenticate` message with a bearer token after connect.
+    Query parameter token auth for WebSocket connections is no longer supported.
 servers:
   - url: http://localhost:8086/api/v1
     description: Local development
@@ -85,6 +87,8 @@ paths:
                 $ref: '#/components/schemas/AuthTokens'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -111,6 +115,8 @@ paths:
                 $ref: '#/components/schemas/LoginChallengeResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -146,6 +152,8 @@ paths:
           $ref: '#/components/responses/ErrorBadRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -172,6 +180,8 @@ paths:
                 $ref: '#/components/schemas/AuthTokens'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -194,6 +204,8 @@ paths:
                 $ref: '#/components/schemas/AuthUserResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -220,6 +232,8 @@ paths:
                 $ref: '#/components/schemas/StatusResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -268,6 +282,8 @@ paths:
                 $ref: '#/components/schemas/TwoFactorSetupResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -294,6 +310,8 @@ paths:
                 $ref: '#/components/schemas/StatusResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -322,6 +340,8 @@ paths:
                 $ref: '#/components/schemas/StatusResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -444,6 +464,8 @@ paths:
                   $ref: '#/components/schemas/Friend'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -470,6 +492,8 @@ paths:
                 $ref: '#/components/schemas/FriendRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '409':
           $ref: '#/components/responses/ErrorConflict'
         '422':
@@ -496,6 +520,8 @@ paths:
                   $ref: '#/components/schemas/FriendRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -518,6 +544,8 @@ paths:
                   $ref: '#/components/schemas/FriendRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -540,6 +568,8 @@ paths:
                 $ref: '#/components/schemas/FriendRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '429':
@@ -564,6 +594,8 @@ paths:
                 $ref: '#/components/schemas/FriendRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '429':
@@ -592,6 +624,8 @@ paths:
                 $ref: '#/components/schemas/Server'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '409':
           $ref: '#/components/responses/ErrorConflict'
         '422':
@@ -622,6 +656,8 @@ paths:
                 $ref: '#/components/schemas/Channel'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '422':
@@ -652,10 +688,14 @@ paths:
                 $ref: '#/components/schemas/Message'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '422':
           $ref: '#/components/responses/ErrorValidation'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -682,6 +722,8 @@ paths:
                 $ref: '#/components/schemas/DmThreadSummary'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '409':
           $ref: '#/components/responses/ErrorConflict'
         '422':
@@ -712,6 +754,8 @@ paths:
           $ref: '#/components/responses/ErrorBadRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -742,10 +786,14 @@ paths:
                 $ref: '#/components/schemas/DmMessage'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '422':
           $ref: '#/components/responses/ErrorValidation'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -773,6 +821,8 @@ paths:
           $ref: '#/components/responses/ErrorBadRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -803,6 +853,8 @@ paths:
                 $ref: '#/components/schemas/Channel'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '422':
@@ -832,6 +884,8 @@ paths:
                   $ref: '#/components/schemas/Channel'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '422':
@@ -864,10 +918,14 @@ paths:
                 $ref: '#/components/schemas/Message'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '422':
           $ref: '#/components/responses/ErrorValidation'
+        '413':
+          $ref: '#/components/responses/ErrorPayloadTooLarge'
         '429':
           $ref: '#/components/responses/ErrorTooManyRequests'
         '500':
@@ -895,6 +953,8 @@ paths:
           $ref: '#/components/responses/ErrorBadRequest'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -923,6 +983,8 @@ paths:
                 $ref: '#/components/schemas/OkResponse'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ErrorValidation'
         '429':
@@ -969,6 +1031,8 @@ paths:
                 $ref: '#/components/schemas/KeyBundleWithPrekey'
         '401':
           $ref: '#/components/responses/ErrorUnauthorized'
+        '403':
+          $ref: '#/components/responses/ErrorForbidden'
         '404':
           $ref: '#/components/responses/ErrorNotFound'
         '422':
@@ -1055,6 +1119,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorBody'
+    ErrorForbidden:
+      description: Forbidden.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
     ErrorNotFound:
       description: Resource not found.
       content:
@@ -1075,6 +1145,12 @@ components:
             $ref: '#/components/schemas/ErrorBody'
     ErrorTooManyRequests:
       description: Rate limit hit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ErrorPayloadTooLarge:
+      description: Payload too large.
       content:
         application/json:
           schema:
