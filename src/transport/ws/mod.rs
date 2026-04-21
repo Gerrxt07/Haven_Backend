@@ -1,29 +1,30 @@
 use crate::{
     auth::generate_id,
-    domain::realtime::{ClientRealtimeMessage, RealtimeEvent},
+    domain::{
+        e2ee::validate_e2ee_payload_size,
+        realtime::{
+            extract_e2ee_payload_fields, websocket_message_rate_limit_key, ClientRealtimeMessage,
+            RealtimeEvent, MAX_WS_MESSAGES_PER_SECOND, WS_MESSAGE_RATE_LIMIT_WINDOW_SECONDS,
+        },
+    },
     error::AppError,
     repository::chat_repository,
+    security::SimpleRateLimiter,
     service::ServiceFactory,
     state::AppState,
 };
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        State,
     },
     response::IntoResponse,
     routing::get,
     Router,
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
-use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
-
-#[derive(Debug, Default, Deserialize)]
-struct WsAuthQuery {
-    access_token: Option<String>,
-}
 
 #[derive(Debug, Default)]
 struct WsConnectionState {
@@ -39,30 +40,9 @@ pub fn router() -> Router<AppState> {
 
 async fn ws_upgrade(
     State(state): State<AppState>,
-    Query(query): Query<WsAuthQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, AppError> {
-    let actor_user_id = match query.access_token.as_deref() {
-        Some(token) => Some(
-            ServiceFactory::new(state.clone())
-                .auth()
-                .authenticate_access_token(token)
-                .await?
-                .id,
-        ),
-        None => None,
-    };
-
-    Ok(ws.on_upgrade(move |socket| handle_socket(state, socket, actor_user_id)))
-}
-
-fn bind_actor_user_id(bound: &mut Option<i64>, candidate: Option<i64>) -> Result<Option<i64>, ()> {
-    match (*bound, candidate) {
-        (Some(existing), Some(next)) if next > 0 && next != existing => Err(()),
-        (Some(existing), _) => Ok(Some(existing)),
-        (None, Some(_)) => Err(()),
-        (None, _) => Ok(None),
-    }
+    Ok(ws.on_upgrade(move |socket| handle_socket(state, socket)))
 }
 
 fn is_friend_request_event_relevant_for_actor(event: &RealtimeEvent, actor_user_id: i64) -> bool {
@@ -125,14 +105,14 @@ async fn user_can_join_channel(state: &AppState, user_id: i64, channel: &str) ->
         .unwrap_or(false)
 }
 
-async fn handle_socket(state: AppState, socket: WebSocket, actor_user_id: Option<i64>) {
+async fn handle_socket(state: AppState, socket: WebSocket) {
     let service_factory = ServiceFactory::new(state.clone());
     let service = service_factory.realtime();
     let mut rx = service.subscribe();
     let (mut sender, mut receiver) = socket.split();
     let ws_session_id = format!("{}", generate_id());
     let connection_state = Arc::new(RwLock::new(WsConnectionState {
-        actor_user_id,
+        actor_user_id: None,
         subscribed_channels: HashSet::new(),
     }));
     let send_connection_state = Arc::clone(&connection_state);
@@ -165,14 +145,25 @@ async fn handle_socket(state: AppState, socket: WebSocket, actor_user_id: Option
 
     let recv_state = state.clone();
     let recv_state_for_membership = state.clone();
+    let recv_state_for_auth = state.clone();
     let recv_connection_state = Arc::clone(&connection_state);
     let recv_ws_session_id = ws_session_id.clone();
     let mut recv_task = tokio::spawn(async move {
         let recv_service = ServiceFactory::new(recv_state).realtime();
+        let auth_service = ServiceFactory::new(recv_state_for_auth).auth();
+        let message_limiter = SimpleRateLimiter::new(
+            MAX_WS_MESSAGES_PER_SECOND,
+            std::time::Duration::from_secs(WS_MESSAGE_RATE_LIMIT_WINDOW_SECONDS),
+        );
+        let message_limit_key = websocket_message_rate_limit_key(&recv_ws_session_id);
 
         while let Some(Ok(message)) = receiver.next().await {
             match message {
                 Message::Text(text) => {
+                    if !message_limiter.allow(&message_limit_key).await {
+                        continue;
+                    }
+
                     let mut bytes = text.as_bytes().to_vec();
                     let parsed: Result<ClientRealtimeMessage, _> =
                         simd_json::serde::from_slice(&mut bytes);
@@ -180,77 +171,92 @@ async fn handle_socket(state: AppState, socket: WebSocket, actor_user_id: Option
                         continue;
                     };
                     match client_msg {
-                        ClientRealtimeMessage::Join { channel, user_id } => {
-                            let resolved_user_id = {
-                                let mut state = recv_connection_state.write().await;
-                                match bind_actor_user_id(&mut state.actor_user_id, user_id) {
-                                    Ok(Some(actor_user_id)) => {
-                                        state.subscribed_channels.insert(channel.clone());
-                                        Some(actor_user_id)
-                                    }
-                                    _ => None,
-                                }
+                        ClientRealtimeMessage::Authenticate { token } => {
+                            let Ok(actor_user_id) = auth_service
+                                .authenticate_access_token(&token)
+                                .await
+                                .map(|user| user.id)
+                            else {
+                                continue;
                             };
 
-                            if resolved_user_id.is_none() {
+                            let mut state = recv_connection_state.write().await;
+                            match state.actor_user_id {
+                                Some(existing) if existing != actor_user_id => continue,
+                                Some(_) => {}
+                                None => {
+                                    state.actor_user_id = Some(actor_user_id);
+                                }
+                            }
+                        }
+                        ClientRealtimeMessage::Join { channel } => {
+                            let actor_user_id = {
+                                let mut state = recv_connection_state.write().await;
+                                let Some(actor_user_id) = state.actor_user_id else {
+                                    continue;
+                                };
+                                if !state.subscribed_channels.contains(&channel) {
+                                    state.subscribed_channels.insert(channel.clone());
+                                }
+                                actor_user_id
+                            };
+
+                            if !user_can_join_channel(
+                                &recv_state_for_membership,
+                                actor_user_id,
+                                &channel,
+                            )
+                            .await
+                            {
+                                let mut state = recv_connection_state.write().await;
+                                state.subscribed_channels.remove(&channel);
                                 continue;
                             }
 
-                            if let Some(actor_user_id) = resolved_user_id {
-                                if !user_can_join_channel(
-                                    &recv_state_for_membership,
-                                    actor_user_id,
-                                    &channel,
-                                )
-                                .await
-                                {
-                                    let mut state = recv_connection_state.write().await;
-                                    state.subscribed_channels.remove(&channel);
-                                    continue;
-                                }
-
-                                let _ = recv_service
-                                    .cache_ws_session(&recv_ws_session_id, actor_user_id)
-                                    .await;
-                                let _ = recv_service.set_presence(actor_user_id, "online").await;
-                            }
+                            let _ = recv_service
+                                .cache_ws_session(&recv_ws_session_id, actor_user_id)
+                                .await;
+                            let _ = recv_service.set_presence(actor_user_id, "online").await;
                         }
-                        ClientRealtimeMessage::Broadcast {
-                            channel,
-                            user_id,
-                            payload,
-                        } => {
-                            let (rejected, resolved_user_id) = {
-                                let mut state = recv_connection_state.write().await;
-                                if !state.subscribed_channels.contains(&channel) {
-                                    (true, None)
-                                } else {
-                                    match bind_actor_user_id(&mut state.actor_user_id, user_id) {
-                                        Ok(Some(resolved)) => (false, Some(resolved)),
-                                        Ok(None) => (true, None),
-                                        Err(()) => (true, None),
+                        ClientRealtimeMessage::Broadcast { channel, payload } => {
+                            let actor_user_id = {
+                                let state = recv_connection_state.read().await;
+                                match state.actor_user_id {
+                                    Some(actor_user_id)
+                                        if state.subscribed_channels.contains(&channel) =>
+                                    {
+                                        actor_user_id
                                     }
+                                    _ => continue,
                                 }
                             };
-                            if rejected {
+
+                            let fields = match extract_e2ee_payload_fields(&payload) {
+                                Ok(fields) => fields,
+                                Err(_) => continue,
+                            };
+                            if validate_e2ee_payload_size(
+                                fields.ciphertext,
+                                fields.nonce,
+                                fields.aad,
+                            )
+                            .is_err()
+                            {
                                 continue;
                             }
 
                             let event = RealtimeEvent::new(
                                 "broadcast",
-                                resolved_user_id,
+                                Some(actor_user_id),
                                 Some(channel),
                                 payload,
                             );
                             let _ = recv_service.publish_with_fanout(event).await;
                         }
-                        ClientRealtimeMessage::Presence { user_id, status } => {
-                            let Some(actor_user_id) = ({
-                                let mut state = recv_connection_state.write().await;
-                                bind_actor_user_id(&mut state.actor_user_id, Some(user_id))
-                                    .ok()
-                                    .flatten()
-                            }) else {
+                        ClientRealtimeMessage::Presence { status } => {
+                            let Some(actor_user_id) =
+                                ({ recv_connection_state.read().await.actor_user_id })
+                            else {
                                 continue;
                             };
 

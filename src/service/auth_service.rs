@@ -41,6 +41,16 @@ struct CachedAuthStatus {
     token_version: i32,
 }
 
+struct TwoFactorVerification<'a> {
+    event_name: &'static str,
+    user_id: i64,
+    email: &'a str,
+    encrypted_secret: Option<&'a str>,
+    encrypted_backup_codes: Option<&'a str>,
+    totp_code: Option<&'a str>,
+    backup_code: Option<&'a str>,
+}
+
 #[derive(Clone)]
 pub struct AuthService {
     state: AppState,
@@ -121,6 +131,8 @@ impl AuthService {
 
         let email_blind_index =
             compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
+        self.enforce_login_identity_rate_limit(&email_blind_index)
+            .await?;
         let user = match auth_repository::find_user_auth_by_email_blind_index(
             &self.state.pg_pool,
             &email_blind_index,
@@ -280,57 +292,16 @@ impl AuthService {
             })?;
 
         // Handle 2FA if enabled
-        if let Some(secret) = user
-            .totp_secret
-            .as_deref()
-            .map(|value| decrypt_totp_secret(&self.state.data_encryption_manager, user.id, value))
-            .transpose()?
-        {
-            match (payload.totp_code.as_deref(), payload.backup_code.as_deref()) {
-                (Some(code), _) => {
-                    if !verify_totp_code(&secret, code)? {
-                        tracing::warn!(
-                            event = "auth.login.verify.failed",
-                            email = payload.email,
-                            reason = "invalid_totp",
-                            "invalid 2fa code"
-                        );
-                        return Err(AppError::Unauthorized);
-                    }
-                }
-                (None, Some(backup_code)) => {
-                    let current_codes = decrypt_backup_code_hashes(
-                        &self.state.data_encryption_manager,
-                        user.id,
-                        user.totp_backup_codes.as_deref(),
-                    )?;
-                    let updated_codes = consume_backup_code(&current_codes, backup_code)
-                        .ok_or_else(|| {
-                            tracing::warn!(
-                                event = "auth.login.verify.failed",
-                                email = payload.email,
-                                reason = "invalid_backup_code",
-                                "invalid backup code"
-                            );
-                            AppError::Unauthorized
-                        })?;
-                    let encrypted_codes = encrypt_backup_code_hashes(
-                        &self.state.data_encryption_manager,
-                        user.id,
-                        &updated_codes,
-                    )?;
-                    auth_repository::update_backup_codes(
-                        &self.state.pg_pool,
-                        user.id,
-                        encrypted_codes,
-                    )
-                    .await?;
-                }
-                (None, None) => {
-                    return Err(AppError::TwoFactorRequired);
-                }
-            }
-        }
+        self.verify_2fa_credentials(TwoFactorVerification {
+            event_name: "auth.login.verify.failed",
+            user_id: user.id,
+            email: &payload.email,
+            encrypted_secret: user.totp_secret.as_deref(),
+            encrypted_backup_codes: user.totp_backup_codes.as_deref(),
+            totp_code: payload.totp_code.as_deref(),
+            backup_code: payload.backup_code.as_deref(),
+        })
+        .await?;
 
         let session_id = generate_id();
         let tokens =
@@ -379,6 +350,8 @@ impl AuthService {
 
         let email_blind_index =
             compute_email_blind_index(&self.state.blind_index_key, &normalized_email)?;
+        self.enforce_login_identity_rate_limit(&email_blind_index)
+            .await?;
         let user = match auth_repository::find_user_auth_by_email_blind_index(
             &self.state.pg_pool,
             &email_blind_index,
@@ -427,57 +400,16 @@ impl AuthService {
             return Err(AppError::Unauthorized);
         }
 
-        if let Some(secret) = user
-            .totp_secret
-            .as_deref()
-            .map(|value| decrypt_totp_secret(&self.state.data_encryption_manager, user.id, value))
-            .transpose()?
-        {
-            match (payload.totp_code.as_deref(), payload.backup_code.as_deref()) {
-                (Some(code), _) => {
-                    if !verify_totp_code(&secret, code)? {
-                        tracing::warn!(
-                            event = "auth.login.failed",
-                            email = payload.email,
-                            reason = "invalid_totp",
-                            "invalid 2fa code"
-                        );
-                        return Err(AppError::Unauthorized);
-                    }
-                }
-                (None, Some(backup_code)) => {
-                    let current_codes = decrypt_backup_code_hashes(
-                        &self.state.data_encryption_manager,
-                        user.id,
-                        user.totp_backup_codes.as_deref(),
-                    )?;
-                    let updated_codes = consume_backup_code(&current_codes, backup_code)
-                        .ok_or_else(|| {
-                            tracing::warn!(
-                                event = "auth.login.failed",
-                                email = payload.email,
-                                reason = "invalid_backup_code",
-                                "invalid backup code"
-                            );
-                            AppError::Unauthorized
-                        })?;
-                    let encrypted_codes = encrypt_backup_code_hashes(
-                        &self.state.data_encryption_manager,
-                        user.id,
-                        &updated_codes,
-                    )?;
-                    auth_repository::update_backup_codes(
-                        &self.state.pg_pool,
-                        user.id,
-                        encrypted_codes,
-                    )
-                    .await?;
-                }
-                (None, None) => {
-                    return Err(AppError::TwoFactorRequired);
-                }
-            }
-        }
+        self.verify_2fa_credentials(TwoFactorVerification {
+            event_name: "auth.login.failed",
+            user_id: user.id,
+            email: &payload.email,
+            encrypted_secret: user.totp_secret.as_deref(),
+            encrypted_backup_codes: user.totp_backup_codes.as_deref(),
+            totp_code: payload.totp_code.as_deref(),
+            backup_code: payload.backup_code.as_deref(),
+        })
+        .await?;
 
         let session_id = generate_id();
         let tokens =
@@ -921,6 +853,82 @@ impl AuthService {
 
         Ok(AuthUser { id: user_id })
     }
+
+    async fn enforce_login_identity_rate_limit(
+        &self,
+        email_blind_index: &str,
+    ) -> Result<(), AppError> {
+        let key = login_identity_rate_limit_key(email_blind_index);
+        if !self.state.login_identity_limiter.allow(&key).await {
+            return Err(AppError::TooManyRequests);
+        }
+
+        Ok(())
+    }
+
+    async fn verify_2fa_credentials(
+        &self,
+        verification: TwoFactorVerification<'_>,
+    ) -> Result<(), AppError> {
+        let Some(secret) = verification
+            .encrypted_secret
+            .map(|value| {
+                decrypt_totp_secret(
+                    &self.state.data_encryption_manager,
+                    verification.user_id,
+                    value,
+                )
+            })
+            .transpose()?
+        else {
+            return Ok(());
+        };
+
+        match (verification.totp_code, verification.backup_code) {
+            (Some(code), _) => {
+                if !verify_totp_code(&secret, code)? {
+                    tracing::warn!(
+                        event = verification.event_name,
+                        email = verification.email,
+                        reason = "invalid_totp",
+                        "invalid 2fa code"
+                    );
+                    return Err(AppError::Unauthorized);
+                }
+            }
+            (None, Some(backup_code)) => {
+                let current_codes = decrypt_backup_code_hashes(
+                    &self.state.data_encryption_manager,
+                    verification.user_id,
+                    verification.encrypted_backup_codes,
+                )?;
+                let updated_codes =
+                    consume_backup_code(&current_codes, backup_code).ok_or_else(|| {
+                        tracing::warn!(
+                            event = verification.event_name,
+                            email = verification.email,
+                            reason = "invalid_backup_code",
+                            "invalid backup code"
+                        );
+                        AppError::Unauthorized
+                    })?;
+                let encrypted_codes = encrypt_backup_code_hashes(
+                    &self.state.data_encryption_manager,
+                    verification.user_id,
+                    &updated_codes,
+                )?;
+                auth_repository::update_backup_codes(
+                    &self.state.pg_pool,
+                    verification.user_id,
+                    encrypted_codes,
+                )
+                .await?;
+            }
+            (None, None) => return Err(AppError::TwoFactorRequired),
+        }
+
+        Ok(())
+    }
 }
 
 fn extract_bearer(headers: &HeaderMap) -> Result<String, AppError> {
@@ -1119,6 +1127,10 @@ fn consume_backup_code(stored_hashes: &[String], provided: &str) -> Option<Vec<S
     Some(updated)
 }
 
+fn login_identity_rate_limit_key(email_blind_index: &str) -> String {
+    format!("login:identity:{email_blind_index}")
+}
+
 fn verify_totp_code(secret_base32: &str, code: &str) -> Result<bool, AppError> {
     let secret = base32::decode(base32::Alphabet::Rfc4648 { padding: false }, secret_base32)
         .ok_or_else(|| AppError::BadRequest("invalid 2fa secret".to_string()))?;
@@ -1156,10 +1168,11 @@ fn totp_code_for_timestamp(secret: &[u8], timestamp: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_email_blind_index, decrypt_backup_code_hashes, decrypt_totp_secret,
-        decrypt_user_email, encrypt_backup_code_hashes, encrypt_date_of_birth, encrypt_totp_secret,
-        encrypt_user_email,
+        compute_email_blind_index, consume_backup_code, decrypt_backup_code_hashes,
+        decrypt_totp_secret, decrypt_user_email, encrypt_backup_code_hashes, encrypt_date_of_birth,
+        encrypt_totp_secret, encrypt_user_email, login_identity_rate_limit_key,
     };
+    use crate::auth::sha256_hex;
     use crate::crypto::CryptoManager;
     use chrono::NaiveDate;
 
@@ -1220,5 +1233,22 @@ mod tests {
             .expect("dob decrypts");
 
         assert_eq!(decrypted, date.to_string());
+    }
+
+    #[test]
+    fn consume_backup_code_removes_matching_hash() {
+        let keep = sha256_hex("keep-me");
+        let used = sha256_hex("use-me");
+
+        let updated = consume_backup_code(&[keep.clone(), used], "use-me")
+            .expect("matching backup code should be consumed");
+
+        assert_eq!(updated, vec![keep]);
+    }
+
+    #[test]
+    fn login_identity_rate_limit_key_is_namespaced() {
+        let key = login_identity_rate_limit_key("blind-index");
+        assert_eq!(key, "login:identity:blind-index");
     }
 }

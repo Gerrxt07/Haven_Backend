@@ -40,6 +40,11 @@ pub struct StoredUserRow {
     pub locale: String,
 }
 
+#[derive(sqlx::FromRow)]
+pub struct DeletedUserCleanupRow {
+    pub id: i64,
+}
+
 pub async fn create_user(
     pool: &PgPool,
     payload: StoredCreateUser,
@@ -108,6 +113,76 @@ pub async fn update_avatar_url(
 ) -> Result<(), AppError> {
     sqlx::query("UPDATE users SET avatar_url = $1 WHERE id = $2")
         .bind(avatar_url)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn list_deleted_users_pending_cleanup(
+    pool: &PgPool,
+    older_than: DateTime<Utc>,
+) -> Result<Vec<DeletedUserCleanupRow>, AppError> {
+    let rows = sqlx::query_as::<_, DeletedUserCleanupRow>(
+        r#"
+        SELECT id
+        FROM users
+        WHERE account_status = 'deleted'
+          AND updated_at < $1
+        "#,
+    )
+    .bind(older_than)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
+pub async fn anonymize_deleted_user(
+    pool: &PgPool,
+    user_id: i64,
+    username: &str,
+    display_name: &str,
+    encrypted_email: &str,
+    email_blind_index: &str,
+    encrypted_date_of_birth: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET username = $2,
+            display_name = $3,
+            email = $4,
+            email_blind_index = $5,
+            email_verified = FALSE,
+            password_hash = NULL,
+            srp_salt = NULL,
+            srp_verifier = NULL,
+            token_version = token_version + 1,
+            totp_secret = NULL,
+            totp_backup_codes = NULL,
+            date_of_birth = $6,
+            avatar_url = NULL,
+            banner_url = NULL,
+            accent_color = NULL,
+            bio = NULL,
+            pronouns = NULL,
+            locale = 'und'
+        WHERE id = $1
+          AND account_status = 'deleted'
+        "#,
+    )
+    .bind(user_id)
+    .bind(username)
+    .bind(display_name)
+    .bind(encrypted_email)
+    .bind(email_blind_index)
+    .bind(encrypted_date_of_birth)
+    .execute(pool)
+    .await?;
+
+    sqlx::query("DELETE FROM auth_sessions WHERE user_id = $1")
         .bind(user_id)
         .execute(pool)
         .await?;
