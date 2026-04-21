@@ -172,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.rate_limit_requests_per_minute,
         Duration::from_secs(60),
     ));
+    let login_identity_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(60)));
     let email_verify_ip_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(900)));
     let email_verify_email_limiter = Arc::new(SimpleRateLimiter::new(5, Duration::from_secs(900)));
     let (realtime_tx, _) = broadcast::channel(512);
@@ -188,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         blind_index_key: Arc::new(config.blind_index_key.clone()),
         email_client,
         rate_limiter,
+        login_identity_limiter,
         email_verify_ip_limiter,
         email_verify_email_limiter,
         realtime_tx,
@@ -197,6 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     RealtimeService::new(state.clone()).spawn_fanout_bridge();
     maintenance::spawn_avatar_cleanup(state.clone());
+    maintenance::spawn_deleted_account_cleanup(state.clone());
 
     let cors_layer = if config.cors_allowed_origins.is_empty() {
         CorsLayer::new()

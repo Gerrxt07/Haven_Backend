@@ -18,16 +18,7 @@ impl RealtimeService {
         self.state.realtime_tx.subscribe()
     }
 
-    pub fn publish(&self, event: RealtimeEvent) -> Result<(), AppError> {
-        self.state
-            .realtime_tx
-            .send(event)
-            .map(|_| ())
-            .map_err(|_| AppError::BadRequest("failed to publish realtime event".to_string()))
-    }
-
     pub async fn publish_with_fanout(&self, event: RealtimeEvent) -> Result<(), AppError> {
-        self.publish(event.clone())?;
         realtime_repository::publish_event(&self.state.redis_pool, &event).await
     }
 

@@ -28,6 +28,8 @@ pub enum AppError {
     Conflict(String),
     #[error("validation error: {0}")]
     Validation(String),
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
     #[error("crypto error: {0}")]
     Crypto(String),
     #[error("too many requests")]
@@ -51,6 +53,7 @@ impl IntoResponse for AppError {
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             AppError::Service(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -96,5 +99,11 @@ mod tests {
     async fn maps_internal_errors_to_500() {
         let response = AppError::Crypto("broken".to_string()).into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn maps_payload_too_large_to_413() {
+        let response = AppError::PayloadTooLarge("too big".to_string()).into_response();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

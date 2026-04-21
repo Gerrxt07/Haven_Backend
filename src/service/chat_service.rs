@@ -6,6 +6,7 @@ use crate::{
             CreateMessageRequest, CreateServerRequest, DmMessage, DmThreadSummary, Message,
             PaginationQuery, Server,
         },
+        e2ee::validate_e2ee_payload_size,
         realtime::RealtimeEvent,
     },
     error::AppError,
@@ -233,6 +234,12 @@ impl ChatService {
                     .ok_or(AppError::Validation(
                         "nonce is required for e2ee message".to_string(),
                     ))?;
+
+                validate_e2ee_payload_size(
+                    Some(ciphertext.as_str()),
+                    Some(nonce.as_str()),
+                    payload.aad.as_deref(),
+                )?;
 
                 let recipient_key_boxes =
                     payload
@@ -615,6 +622,12 @@ impl ChatService {
                 .ok_or(AppError::Validation(
                     "nonce is required for e2ee message".to_string(),
                 ))?;
+
+            validate_e2ee_payload_size(
+                Some(ciphertext.as_str()),
+                Some(nonce.as_str()),
+                payload.aad.as_deref(),
+            )?;
 
             (
                 "[e2ee]".to_string(),
