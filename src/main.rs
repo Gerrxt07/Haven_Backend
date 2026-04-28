@@ -205,7 +205,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cors_layer = if config.cors_allowed_origins.is_empty() {
         CorsLayer::new()
-            .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
             .allow_headers([
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
@@ -220,7 +224,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>();
 
         CorsLayer::new()
-            .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
             .allow_headers([
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
@@ -234,6 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/", get(|| async { "haven-backend" }))
+        .route("/api/v1", get(|| async { "haven-api" }))
         .nest("/api/v1", api_router)
         .with_state(state)
         .layer(RequestBodyLimitLayer::new(config.request_body_limit_bytes))

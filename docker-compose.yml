@@ -6,8 +6,9 @@ services:
     container_name: haven-backend-dev
     # This automatically restarts the container if it crashes or you restart Docker
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8086:8086"
+    # Use the host network so the backend can reach host-published Postgres/Dragonfly
+    # even when the shared Docker bridge network is unhealthy.
+    network_mode: host
     volumes:
       # Mount the current directory so source code changes are instantly visible
       - .:/app
@@ -17,27 +18,14 @@ services:
     env_file:
       - .env
     environment:
-      # Override localhost with container names since we are running inside the proxy-net network
-      - POSTGRES_URL=postgres://admin:b1T8r8SPQ6BXk5XZvY3nysGnlpF6@postgres:5432/haven_backend
-      - POSTGRES_ADMIN_URL=postgres://admin:b1T8r8SPQ6BXk5XZvY3nysGnlpF6@postgres:5432/postgres
-      - DRAGONFLY_URL=redis://dragonfly:6379
       - AVATAR_STORAGE_DIR=/app/storage/avatars
       - BACKEND_LOG_FILE=/app/backend-events.log
       - RUST_LOG=haven_backend=trace,tower_http=info,axum=info,sqlx=warn,sqlx::query=warn,tokio_tungstenite=warn,tungstenite=warn
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     dns:
       - ${DOCKER_DNS_1:-1.1.1.1}
       - ${DOCKER_DNS_2:-1.0.0.1}
-    networks:
-      # Join the proxy-net to be able to talk to postgres and dragonfly
-      - proxy-net
 
 volumes:
   # Prevents your local Ubuntu target folder from conflicting with Docker's Linux target folder
   cargo-target:
   cargo-registry:
-
-networks:
-  proxy-net:
-    external: true
