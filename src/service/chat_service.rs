@@ -603,64 +603,37 @@ impl ChatService {
             return Err(AppError::Forbidden);
         }
 
-        let is_encrypted = payload.ciphertext.is_some() || payload.nonce.is_some();
-        let (content_to_store, ciphertext, nonce, aad, algorithm) = if is_encrypted {
-            let ciphertext = payload
-                .ciphertext
-                .as_ref()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .ok_or(AppError::Validation(
-                    "ciphertext is required for e2ee message".to_string(),
-                ))?;
+        let ciphertext = payload
+            .ciphertext
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .ok_or(AppError::Validation(
+                "ciphertext is required for direct messages".to_string(),
+            ))?;
 
-            let nonce = payload
-                .nonce
-                .as_ref()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .ok_or(AppError::Validation(
-                    "nonce is required for e2ee message".to_string(),
-                ))?;
+        let nonce = payload
+            .nonce
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .ok_or(AppError::Validation(
+                "nonce is required for direct messages".to_string(),
+            ))?;
 
-            validate_e2ee_payload_size(
-                Some(ciphertext.as_str()),
-                Some(nonce.as_str()),
-                payload.aad.as_deref(),
-            )?;
+        validate_e2ee_payload_size(
+            Some(ciphertext.as_str()),
+            Some(nonce.as_str()),
+            payload.aad.as_deref(),
+        )?;
 
-            (
-                "[e2ee]".to_string(),
-                Some(ciphertext),
-                Some(nonce),
-                payload.aad,
-                Some(
-                    payload
-                        .algorithm
-                        .unwrap_or_else(|| "xchacha20poly1305".to_string()),
-                ),
-            )
-        } else {
-            let content = payload
-                .content
-                .as_ref()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .ok_or(AppError::Validation(
-                    "content must not be empty".to_string(),
-                ))?;
-
-            if content
-                .chars()
-                .any(|c| c.is_control() && c != '\n' && c != '\t')
-            {
-                return Err(AppError::Validation(
-                    "content contains invalid control characters".to_string(),
-                ));
-            }
-
-            (content, None, None, None, None)
-        };
+        let content_to_store = "[e2ee]".to_string();
+        let algorithm = Some(
+            payload
+                .algorithm
+                .unwrap_or_else(|| "xchacha20poly1305+double-ratchet-v1".to_string()),
+        );
+        let aad = payload.aad;
 
         let message = chat_repository::create_dm_message(
             &self.state.pg_pool,
@@ -669,9 +642,9 @@ impl ChatService {
                 thread_id,
                 author_user_id: actor_user_id,
                 content: content_to_store,
-                is_encrypted,
-                ciphertext,
-                nonce,
+                is_encrypted: true,
+                ciphertext: Some(ciphertext),
+                nonce: Some(nonce),
                 aad,
                 algorithm,
             },

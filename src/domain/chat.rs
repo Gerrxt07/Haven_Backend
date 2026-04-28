@@ -139,7 +139,6 @@ pub struct DmThreadSummary {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateDmMessageRequest {
-    pub content: Option<String>,
     pub ciphertext: Option<String>,
     pub nonce: Option<String>,
     pub aad: Option<String>,

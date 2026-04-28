@@ -15,3 +15,6 @@
 2026-04-21T11:11:53+02:00 [CODE] Updated `docs/openapi.yaml` to document WebSocket first-message auth notes, shared `403 Forbidden` responses, and `413 Payload Too Large` on message creation routes.
 2026-04-21T12:08:18+02:00 [USER] Implement backend issues #16-#19.
 2026-04-21T12:08:18+02:00 [CODE] Switched ID generation to Sonyflake with a configurable machine-id source, removed legacy password auth and the `/auth/login` route, added login IP rate limiting for SRP challenge/verify, dropped `password_hash` from writes plus added migration `0011_drop_password_hash_from_users.sql`, and invalidated `cache:auth:status:{user_id}` during deleted-account anonymization.
+2026-04-28T20:15:35+02:00 [USER] Requested fixing client HCVE-2026-0001 through HCVE-2026-0004, with backend pushed if changed.
+2026-04-28T20:15:35+02:00 [CODE] Backend direct-message creation now rejects plaintext payloads and stores only ciphertext, nonce, AAD, and E2EE algorithm for DMs.
+2026-04-28T20:15:35+02:00 [TOOL] Verified backend change with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
