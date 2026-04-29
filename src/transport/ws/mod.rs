@@ -24,7 +24,7 @@ use axum::{
 };
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use std::{collections::HashSet, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 
 #[derive(Debug, Default)]
 struct WsConnectionState {
@@ -116,11 +116,19 @@ async fn handle_socket(state: AppState, socket: WebSocket) {
         subscribed_channels: HashSet::new(),
     }));
     let send_connection_state = Arc::clone(&connection_state);
+    let (control_tx, mut control_rx) = mpsc::channel::<Message>(16);
 
     let mut send_task = tokio::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(event) => {
+            tokio::select! {
+                Some(message) = control_rx.recv() => {
+                    if sender.send(message).await.is_err() {
+                        break;
+                    }
+                }
+                event_result = rx.recv() => {
+                    match event_result {
+                        Ok(event) => {
                     let should_send = {
                         let state = send_connection_state.read().await;
                         should_send_event(&event, &state)
@@ -137,8 +145,10 @@ async fn handle_socket(state: AppState, socket: WebSocket) {
                         break;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
             }
         }
     });
@@ -148,6 +158,7 @@ async fn handle_socket(state: AppState, socket: WebSocket) {
     let recv_state_for_auth = state.clone();
     let recv_connection_state = Arc::clone(&connection_state);
     let recv_ws_session_id = ws_session_id.clone();
+    let recv_control_tx = control_tx.clone();
     let mut recv_task = tokio::spawn(async move {
         let recv_service = ServiceFactory::new(recv_state).realtime();
         let auth_service = ServiceFactory::new(recv_state_for_auth).auth();
@@ -270,7 +281,15 @@ async fn handle_socket(state: AppState, socket: WebSocket) {
                             let _ = recv_service.publish_with_fanout(event).await;
                         }
                         ClientRealtimeMessage::Ping => {
-                            // Keep ping lightweight: this is only used as liveness heartbeat.
+                            let event = RealtimeEvent::new(
+                                "pong",
+                                None,
+                                None,
+                                serde_json::json!({ "status": "ok" }),
+                            );
+                            if let Ok(payload) = simd_json::to_string(&event) {
+                                let _ = recv_control_tx.send(Message::Text(payload.into())).await;
+                            }
                         }
                     }
                 }
