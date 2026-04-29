@@ -41,6 +41,7 @@ use tracing::{info, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 const SRP_CHALLENGE_HEADER: &str = "x-srp-challenge-id";
+const IDEMPOTENCY_HEADER: &str = "idempotency-key";
 
 fn is_valid_db_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -214,6 +215,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
                 SRP_CHALLENGE_HEADER.parse().expect("valid SRP header name"),
+                IDEMPOTENCY_HEADER
+                    .parse()
+                    .expect("valid idempotency header name"),
             ])
             .allow_origin(Any)
     } else {
@@ -233,6 +237,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
                 SRP_CHALLENGE_HEADER.parse().expect("valid SRP header name"),
+                IDEMPOTENCY_HEADER
+                    .parse()
+                    .expect("valid idempotency header name"),
             ])
             .allow_origin(origins)
     };
