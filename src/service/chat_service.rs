@@ -14,7 +14,7 @@ use crate::{
     service::realtime_service::RealtimeService,
     state::AppState,
 };
-use tracing::info;
+use tracing::{info, warn};
 use validator::Validate;
 
 const MEMBERSHIP_CACHE_TTL_SECONDS: u64 = 120;
@@ -518,12 +518,33 @@ impl ChatService {
         )
         .await?;
 
-        self.invalidate_dm_threads_cache_for(actor_user_id, payload.peer_user_id)
-            .await?;
+        if let Err(err) = self
+            .invalidate_dm_threads_cache_for(actor_user_id, payload.peer_user_id)
+            .await
+        {
+            warn!(
+                event = "dm.thread.cache_invalidation_failed",
+                actor_user_id,
+                peer_user_id = payload.peer_user_id,
+                error = %err,
+                "continuing after direct message thread cache invalidation failed"
+            );
+        }
 
         let summary =
             chat_repository::get_dm_thread_summary(&self.state.pg_pool, actor_user_id, thread.id)
-                .await?
+                .await
+                .map_err(|err| {
+                    tracing::error!(
+                        event = "dm.thread.summary_failed",
+                        actor_user_id,
+                        peer_user_id = payload.peer_user_id,
+                        thread_id = thread.id,
+                        error = %err,
+                        "failed to load direct message thread summary"
+                    );
+                    err
+                })?
                 .ok_or(AppError::NotFound)?;
 
         Ok(summary)

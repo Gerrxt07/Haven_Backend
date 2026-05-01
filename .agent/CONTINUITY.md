@@ -31,3 +31,6 @@
 2026-05-01T10:50:54+0200 [USER] Requested backend CI/CD, Docker, or custom script support to automatically fetch and pull new pushed commits.
 2026-05-01T10:50:54+0200 [CODE] Added `scripts/auto-pull-deploy.sh` to poll `origin/master`, refuse dirty/diverged trees, fast-forward pull, and rebuild Docker Compose; added `scripts/install-auto-pull-service.sh` plus docs for a systemd user timer.
 2026-05-01T10:50:54+0200 [TOOL] Verified deploy helper scripts with `bash -n`; Docker was not available in the Codex shell, so live compose execution was not run.
+2026-05-01T16:48:56+0200 [USER] Reported backend still returned `500` on `POST /api/v1/dm/threads` with no DM-specific DB error log.
+2026-05-01T16:48:56+0200 [CODE] Made DM thread cache invalidation best-effort so Redis/index failures cannot break opening a contact, and added targeted summary-load error logging.
+2026-05-01T16:48:56+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
