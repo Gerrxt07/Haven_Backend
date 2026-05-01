@@ -496,13 +496,36 @@ impl ChatService {
             ));
         }
 
+        info!(
+            event = "dm.thread.create.start",
+            actor_user_id,
+            peer_user_id = payload.peer_user_id,
+            "creating direct message thread"
+        );
+
         let are_friends = friends_repository::are_friends(
             &self.state.pg_pool,
             actor_user_id,
             payload.peer_user_id,
         )
-        .await?;
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                event = "dm.thread.friend_check_failed",
+                actor_user_id,
+                peer_user_id = payload.peer_user_id,
+                error = %err,
+                "failed to check friendship before creating direct message thread"
+            );
+            err
+        })?;
         if !are_friends {
+            warn!(
+                event = "dm.thread.friend_check_forbidden",
+                actor_user_id,
+                peer_user_id = payload.peer_user_id,
+                "direct message thread creation denied because users are not friends"
+            );
             return Err(AppError::Forbidden);
         }
 
@@ -516,7 +539,27 @@ impl ChatService {
                 created_by_user_id: actor_user_id,
             },
         )
-        .await?;
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                event = "dm.thread.create_or_get_failed",
+                actor_user_id,
+                peer_user_id = payload.peer_user_id,
+                user_a_id,
+                user_b_id,
+                error = %err,
+                "failed to create or get direct message thread"
+            );
+            err
+        })?;
+
+        info!(
+            event = "dm.thread.create.ready",
+            actor_user_id,
+            peer_user_id = payload.peer_user_id,
+            thread_id = thread.id,
+            "direct message thread ready"
+        );
 
         if let Err(err) = self
             .invalidate_dm_threads_cache_for(actor_user_id, payload.peer_user_id)
