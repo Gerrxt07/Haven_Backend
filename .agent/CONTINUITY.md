@@ -22,3 +22,6 @@
 2026-05-01T10:32:01+0200 [ASSUMPTION] Likely production schema drift from `0010_create_dm_threads_and_messages.sql`, where an existing `dm_threads` table lacked constraints/columns later required by `create_or_get_dm_thread`.
 2026-05-01T10:32:01+0200 [CODE] Added migration `0012_fix_dm_thread_pair_constraint.sql` to repair `created_by_user_id`, add missing DM thread constraints, merge duplicate pair rows, and add the `(user_a_id, user_b_id)` unique constraint required by `ON CONFLICT`.
 2026-05-01T10:32:01+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+2026-05-01T10:38:53+0200 [USER] Reported same client database error after rebuild; backend logs still showed `POST /api/v1/dm/threads` returning `500`.
+2026-05-01T10:38:53+0200 [CODE] Hardened DM thread creation to select an existing pair before insert and removed runtime dependency on `ON CONFLICT (user_a_id, user_b_id)`, with duplicate-key fallback to reselect.
+2026-05-01T10:38:53+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.

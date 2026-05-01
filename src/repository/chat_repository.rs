@@ -262,12 +262,14 @@ pub async fn create_or_get_dm_thread(
     pool: &PgPool,
     input: NewDmThread,
 ) -> Result<DmThread, AppError> {
+    if let Some(thread) = find_dm_thread_by_pair(pool, input.user_a_id, input.user_b_id).await? {
+        return Ok(thread);
+    }
+
     let thread = sqlx::query_as::<_, DmThread>(
         r#"
         INSERT INTO dm_threads (id, user_a_id, user_b_id, created_by_user_id)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (user_a_id, user_b_id)
-        DO UPDATE SET updated_at = dm_threads.updated_at
         RETURNING id, user_a_id, user_b_id, created_by_user_id, created_at, updated_at
         "#,
     )
@@ -276,6 +278,39 @@ pub async fn create_or_get_dm_thread(
     .bind(input.user_b_id)
     .bind(input.created_by_user_id)
     .fetch_one(pool)
+    .await;
+
+    match thread {
+        Ok(thread) => Ok(thread),
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
+            find_dm_thread_by_pair(pool, input.user_a_id, input.user_b_id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Conflict("direct message thread already exists".to_string())
+                })
+        }
+        Err(err) => Err(AppError::Database(err)),
+    }
+}
+
+async fn find_dm_thread_by_pair(
+    pool: &PgPool,
+    user_a_id: i64,
+    user_b_id: i64,
+) -> Result<Option<DmThread>, AppError> {
+    let thread = sqlx::query_as::<_, DmThread>(
+        r#"
+        SELECT id, user_a_id, user_b_id, created_by_user_id, created_at, updated_at
+        FROM dm_threads
+        WHERE user_a_id = $1
+          AND user_b_id = $2
+        ORDER BY id
+        LIMIT 1
+        "#,
+    )
+    .bind(user_a_id)
+    .bind(user_b_id)
+    .fetch_optional(pool)
     .await?;
 
     Ok(thread)
