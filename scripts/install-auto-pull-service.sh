@@ -15,6 +15,7 @@ Description=Auto pull and deploy Haven backend
 [Service]
 Type=oneshot
 Environment=HAVEN_BACKEND_REPO=${REPO_DIR}
+EnvironmentFile=-%h/.config/haven-backend-auto-pull.env
 ExecStart=${REPO_DIR}/scripts/auto-pull-deploy.sh
 EOF
 

@@ -34,3 +34,6 @@
 2026-05-01T16:48:56+0200 [USER] Reported backend still returned `500` on `POST /api/v1/dm/threads` with no DM-specific DB error log.
 2026-05-01T16:48:56+0200 [CODE] Made DM thread cache invalidation best-effort so Redis/index failures cannot break opening a contact, and added targeted summary-load error logging.
 2026-05-01T16:48:56+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+2026-05-01T16:52:22+0200 [USER] Requested Discord webhook notifications from the backend auto-pull deploy script for update found, successful deploy, and deploy errors.
+2026-05-01T16:52:22+0200 [CODE] Added optional `DISCORD_WEBHOOK_URL` support to `scripts/auto-pull-deploy.sh`, including update/success/error embeds, optional `DISCORD_USERNAME`, and systemd `EnvironmentFile` support via `~/.config/haven-backend-auto-pull.env`.
+2026-05-01T16:52:22+0200 [TOOL] Verified deploy helper scripts with `bash -n`; live webhook and Docker execution were not run.

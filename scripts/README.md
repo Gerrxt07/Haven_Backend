@@ -20,6 +20,21 @@ Install the user timer:
 
 The timer polls every 60 seconds.
 
+Optional Discord messages:
+
+```sh
+mkdir -p ~/.config
+printf 'DISCORD_WEBHOOK_URL=%s\n' 'https://discord.com/api/webhooks/...' > ~/.config/haven-backend-auto-pull.env
+chmod 600 ~/.config/haven-backend-auto-pull.env
+systemctl --user restart haven-backend-auto-pull.timer
+```
+
+Discord sends:
+
+- update found
+- deploy succeeded
+- deploy failed
+
 Check status:
 
 ```sh
