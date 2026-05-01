@@ -29,13 +29,64 @@ pub async fn find_user_by_username(
 }
 
 pub async fn are_friends(pool: &PgPool, user_a: i64, user_b: i64) -> Result<bool, AppError> {
-    let exists = sqlx::query_scalar::<_, i64>(
+    let friendship = sqlx::query_scalar::<_, i64>(
         "SELECT 1 FROM friends WHERE user_id = $1 AND friend_user_id = $2",
     )
     .bind(user_a)
     .bind(user_b)
     .fetch_optional(pool)
-    .await?
+    .await;
+
+    match friendship {
+        Ok(row) => Ok(row.is_some()),
+        Err(sqlx::Error::Database(db_err)) => {
+            tracing::warn!(
+                event = "friends.membership_check_failed",
+                user_a,
+                user_b,
+                db_code = ?db_err.code(),
+                db_message = %db_err.message(),
+                "falling back to accepted friend request membership check"
+            );
+            are_friends_by_accepted_request(pool, user_a, user_b).await
+        }
+        Err(err) => Err(AppError::Database(err)),
+    }
+}
+
+async fn are_friends_by_accepted_request(
+    pool: &PgPool,
+    user_a: i64,
+    user_b: i64,
+) -> Result<bool, AppError> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT 1
+        FROM friend_requests
+        WHERE status = 'accepted'
+          AND (
+              (from_user_id = $1 AND to_user_id = $2)
+              OR (from_user_id = $2 AND to_user_id = $1)
+          )
+        "#,
+    )
+    .bind(user_a)
+    .bind(user_b)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| {
+        if let sqlx::Error::Database(db_err) = &err {
+            tracing::error!(
+                event = "friends.accepted_request_check_failed",
+                user_a,
+                user_b,
+                db_code = ?db_err.code(),
+                db_message = %db_err.message(),
+                "failed accepted friend request membership fallback"
+            );
+        }
+        AppError::Database(err)
+    })?
     .is_some();
 
     Ok(exists)

@@ -40,3 +40,6 @@
 2026-05-01T17:05:12+0200 [USER] Reported `POST /api/v1/dm/threads` still returned `500`; supplied logs still lacked any targeted `dm.thread.*` event.
 2026-05-01T17:05:12+0200 [CODE] Added step-level DM thread create tracing for start, friend check failure/forbidden, create-or-get failure, and thread-ready state.
 2026-05-01T17:05:12+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+2026-05-01T17:13:32+0200 [USER] Supplied targeted log showing `dm.thread.friend_check_failed` with `error=database error` in `friends_repository::are_friends`.
+2026-05-01T17:13:32+0200 [CODE] Made friendship membership checks fall back to accepted `friend_requests` when the `friends` table query fails, and log the SQL code/message for the primary and fallback checks.
+2026-05-01T17:13:32+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
