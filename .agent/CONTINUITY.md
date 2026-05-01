@@ -18,3 +18,7 @@
 2026-04-28T20:15:35+02:00 [USER] Requested fixing client HCVE-2026-0001 through HCVE-2026-0004, with backend pushed if changed.
 2026-04-28T20:15:35+02:00 [CODE] Backend direct-message creation now rejects plaintext payloads and stores only ciphertext, nonce, AAD, and E2EE algorithm for DMs.
 2026-04-28T20:15:35+02:00 [TOOL] Verified backend change with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+2026-05-01T10:32:01+0200 [USER] Reported clicking a contact to write now returns `database error`; backend log showed `POST /api/v1/dm/threads` returned `500`.
+2026-05-01T10:32:01+0200 [ASSUMPTION] Likely production schema drift from `0010_create_dm_threads_and_messages.sql`, where an existing `dm_threads` table lacked constraints/columns later required by `create_or_get_dm_thread`.
+2026-05-01T10:32:01+0200 [CODE] Added migration `0012_fix_dm_thread_pair_constraint.sql` to repair `created_by_user_id`, add missing DM thread constraints, merge duplicate pair rows, and add the `(user_a_id, user_b_id)` unique constraint required by `ON CONFLICT`.
+2026-05-01T10:32:01+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
