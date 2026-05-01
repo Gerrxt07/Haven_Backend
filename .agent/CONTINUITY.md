@@ -28,3 +28,6 @@
 2026-05-01T10:42:33+0200 [USER] Reported `POST /api/v1/dm/threads` still returned `500` after latest rebuild.
 2026-05-01T10:42:33+0200 [CODE] Made DM thread lookup compatible with schemas missing `created_by_user_id`, added fallback legacy insert without that column on SQL code `42703`, and logs sanitized DB code/message if legacy insert still fails.
 2026-05-01T10:42:33+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+2026-05-01T10:50:54+0200 [USER] Requested backend CI/CD, Docker, or custom script support to automatically fetch and pull new pushed commits.
+2026-05-01T10:50:54+0200 [CODE] Added `scripts/auto-pull-deploy.sh` to poll `origin/master`, refuse dirty/diverged trees, fast-forward pull, and rebuild Docker Compose; added `scripts/install-auto-pull-service.sh` plus docs for a systemd user timer.
+2026-05-01T10:50:54+0200 [TOOL] Verified deploy helper scripts with `bash -n`; Docker was not available in the Codex shell, so live compose execution was not run.
