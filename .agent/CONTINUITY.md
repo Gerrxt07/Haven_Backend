@@ -25,3 +25,6 @@
 2026-05-01T10:38:53+0200 [USER] Reported same client database error after rebuild; backend logs still showed `POST /api/v1/dm/threads` returning `500`.
 2026-05-01T10:38:53+0200 [CODE] Hardened DM thread creation to select an existing pair before insert and removed runtime dependency on `ON CONFLICT (user_a_id, user_b_id)`, with duplicate-key fallback to reselect.
 2026-05-01T10:38:53+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+2026-05-01T10:42:33+0200 [USER] Reported `POST /api/v1/dm/threads` still returned `500` after latest rebuild.
+2026-05-01T10:42:33+0200 [CODE] Made DM thread lookup compatible with schemas missing `created_by_user_id`, added fallback legacy insert without that column on SQL code `42703`, and logs sanitized DB code/message if legacy insert still fails.
+2026-05-01T10:42:33+0200 [TOOL] Verified backend with `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.

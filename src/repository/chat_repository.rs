@@ -289,6 +289,54 @@ pub async fn create_or_get_dm_thread(
                     AppError::Conflict("direct message thread already exists".to_string())
                 })
         }
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("42703") => {
+            tracing::warn!(
+                event = "dm.thread.create.legacy_schema",
+                db_code = ?db_err.code(),
+                db_message = %db_err.message(),
+                "falling back to legacy dm_threads insert"
+            );
+            create_dm_thread_legacy_schema(pool, input).await
+        }
+        Err(err) => Err(AppError::Database(err)),
+    }
+}
+
+async fn create_dm_thread_legacy_schema(
+    pool: &PgPool,
+    input: NewDmThread,
+) -> Result<DmThread, AppError> {
+    let thread = sqlx::query_as::<_, DmThread>(
+        r#"
+        INSERT INTO dm_threads (id, user_a_id, user_b_id)
+        VALUES ($1, $2, $3)
+        RETURNING id, user_a_id, user_b_id, user_a_id AS created_by_user_id, created_at, updated_at
+        "#,
+    )
+    .bind(input.id)
+    .bind(input.user_a_id)
+    .bind(input.user_b_id)
+    .fetch_one(pool)
+    .await;
+
+    match thread {
+        Ok(thread) => Ok(thread),
+        Err(sqlx::Error::Database(db_err)) if db_err.code().as_deref() == Some("23505") => {
+            find_dm_thread_by_pair(pool, input.user_a_id, input.user_b_id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Conflict("direct message thread already exists".to_string())
+                })
+        }
+        Err(sqlx::Error::Database(db_err)) => {
+            tracing::error!(
+                event = "dm.thread.create.database_error",
+                db_code = ?db_err.code(),
+                db_message = %db_err.message(),
+                "failed to create direct message thread"
+            );
+            Err(AppError::Database(sqlx::Error::Database(db_err)))
+        }
         Err(err) => Err(AppError::Database(err)),
     }
 }
@@ -300,7 +348,7 @@ async fn find_dm_thread_by_pair(
 ) -> Result<Option<DmThread>, AppError> {
     let thread = sqlx::query_as::<_, DmThread>(
         r#"
-        SELECT id, user_a_id, user_b_id, created_by_user_id, created_at, updated_at
+        SELECT id, user_a_id, user_b_id, user_a_id AS created_by_user_id, created_at, updated_at
         FROM dm_threads
         WHERE user_a_id = $1
           AND user_b_id = $2
